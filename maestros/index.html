@@ -288,12 +288,13 @@ async function renderTeachers() {
     <div id="nt-msg" class="okmsg"></div><div id="nt-err" class="err"></div>
   </div>
   <div class="card"><h2>Maestros registrados</h2>
-    <table><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Estado</th><th></th></tr>
+    <table><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th></th></tr>
     ${list.map(t => `<tr><td>${esc(t.name)}</td><td>${esc(t.email)}</td>
       <td><span class="badge ${t.role === "admin" ? "admin" : "teacher"}">${t.role === "admin" ? "Admin" : "Maestro/a"}</span></td>
       <td>${(t.courses || []).map(id => esc(courses[id] ? courses[id].name : id)).join(", ")}</td>
+      <td>${(t.courses || []).map(id => `<div style="margin-bottom:6px"><small>${esc(courses[id] ? courses[id].name : id)}</small><br><input type="url" data-teacher="${t.uid}" data-course="${id}" data-field="classroomLink" value="${esc((t.classroomLinks || {})[id] || "")}" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></div>`).join("")}</td>
       <td>${t.active === false ? '<span class="badge off">Desactivado</span>' : "Activo"}</td>
-      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""}</td></tr>`).join("")}
+      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""} <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button></td></tr>`).join("")}
     </table>
   </div>`;
   $("btn-create-teacher").addEventListener("click", async () => {
@@ -324,6 +325,40 @@ async function renderTeachers() {
     const activate = b.getAttribute("data-active") === "1";
     await db.collection("teachers").doc(uid).update({ active: activate });
     renderTeachers();
+  }));
+  // Guardar los enlaces de Classroom de un maestro (uno por curso que imparte)
+  // y propagarlos a las fichas de sus alumnos de cada curso.
+  s.querySelectorAll("[data-save-classroom]").forEach(b => b.addEventListener("click", async () => {
+    const uid = b.getAttribute("data-save-classroom");
+    const inputs = [...s.querySelectorAll(`[data-teacher="${uid}"][data-field="classroomLink"]`)];
+    const links = {};
+    inputs.forEach(inp => { const v = inp.value.trim(); if (v) links[inp.getAttribute("data-course")] = v; });
+    showErr($("nt-err"), ""); showOk($("nt-msg"), "");
+    b.disabled = true;
+    try {
+      const tDoc = await db.collection("teachers").doc(uid).get();
+      const assigned = tDoc.exists ? (tDoc.data().courses || []) : [];
+      if (Object.keys(links).length) {
+        await db.collection("teachers").doc(uid).update({ classroomLinks: links });
+      } else {
+        await db.collection("teachers").doc(uid).update({ classroomLinks: firebase.firestore.FieldValue.delete() });
+      }
+      const batch = db.batch();
+      let n = 0;
+      for (const cid of assigned) {
+        const snap = await db.collection("students").where("teacherId", "==", uid).where("courseId", "==", cid).get();
+        snap.forEach(d => {
+          if (links[cid]) batch.update(d.ref, { teacherClassroomUrl: links[cid] });
+          else batch.update(d.ref, { teacherClassroomUrl: firebase.firestore.FieldValue.delete() });
+          n++;
+        });
+      }
+      if (n) await batch.commit();
+      showOk($("nt-msg"), "Enlaces de Classroom guardados." + (n ? " Actualizados " + n + " alumno(s)." : ""));
+      renderTeachers();
+    } catch (e) {
+      showErr($("nt-err"), "No se pudo guardar: " + (e.message || e));
+    } finally { b.disabled = false; }
   }));
 }
 </script>
@@ -505,6 +540,10 @@ async function renderStudents() {
             const contact = TEACHER_CONTACTS[tName];
             if (contact) update.teacherWhatsApp = contact.wa;
           }
+          // Enlace de Classroom de ese maestro para el curso de este alumno.
+          const courseId = stDoc.exists ? (stDoc.data().courseId || "") : "";
+          const links = tDoc.exists ? (tDoc.data().classroomLinks || {}) : {};
+          if (courseId && links[courseId]) update.teacherClassroomUrl = links[courseId];
         }
       } catch (lookupErr) {
         teacherNote = " (No se pudo guardar el maestro en su ficha, pero la cuenta sí quedó creada.)";
