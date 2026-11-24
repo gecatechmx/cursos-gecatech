@@ -32,6 +32,15 @@
   .tabs button { background:#e8edf1; color:var(--navy); }
   .tabs button.active { background:var(--navy); color:#fff; }
   table { width:100%; border-collapse:collapse; font-size:14px; margin-top:10px; }
+  .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  @media (max-width:640px) {
+    .students th:nth-child(2), .students td:nth-child(2),
+    .students th:nth-child(3), .students td:nth-child(3) { display:none; }
+    .students.show-all th:nth-child(2), .students.show-all td:nth-child(2),
+    .students.show-all th:nth-child(3), .students.show-all td:nth-child(3) { display:table-cell; }
+  }
+  #btn-toggle-cols { display:none; }
+  @media (max-width:640px) { #btn-toggle-cols { display:inline-block; } }
   th, td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:left; vertical-align:top; }
   th { color:var(--muted); font-size:12px; text-transform:uppercase; }
   .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
@@ -101,6 +110,18 @@ const firebaseConfig = {
   appId: "1:874181432740:web:bdd642fc242acdae159d31"
 };
 const ADMIN_EMAIL = "anghelo.carrillo@gecatechmx.com";
+
+// ---------- Google Classroom (API oficial, solo lectura) ----------
+// El ID de cliente se consigue en Google Cloud Console (mismo proyecto de
+// Firebase o uno nuevo): Credenciales > ID de cliente de OAuth > Aplicación
+// web. Sin él, la pestaña Classroom muestra que falta la configuración.
+const CLASSROOM_CLIENT_ID = "874181432740-9qfurb924gtatf45oqig527iffht5277.apps.googleusercontent.com";
+const CLASSROOM_SCOPES = [
+  "https://www.googleapis.com/auth/classroom.courses.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+  "https://www.googleapis.com/auth/classroom.rosters.readonly"
+];
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
@@ -115,6 +136,7 @@ let courses = {};       // id -> {name, schedule, durationMonths, startDate, cla
 let currentTab = "alumnos";
 let selCourse = "";
 let selTeacher = "";
+let showAllCols = false;
 let editingStudentId = null;
 
 function showErr(el, msg) { el.textContent = msg; }
@@ -206,8 +228,8 @@ function enterApp() {
   const tabs = $("tabs");
   tabs.innerHTML = "";
   const defs = me.role === "admin"
-    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"]]
-    : [["alumnos", "Mis alumnos"]];
+    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"]]
+    : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"]];
   defs.forEach(([id, label]) => {
     const b = document.createElement("button");
     b.textContent = label;
@@ -220,7 +242,173 @@ function enterApp() {
 async function renderSection() {
   if (currentTab === "maestros") renderTeachers();
   else if (currentTab === "cursos") renderCourses();
+  else if (currentTab === "classroom") renderClassroom();
   else renderStudents();
+}
+
+// ---------- Google Classroom (API oficial, solo lectura) ----------
+// Classroom no se puede incrustar en un iframe (responde
+// X-Frame-Options: SAMEORIGIN), por eso se lee con la API oficial de
+// Google. El token de acceso vive solo en memoria: nunca se guarda en
+// localStorage ni en el código.
+let classroomToken = null;
+let classroomTokenClient = null;
+let classroomCourses = [];
+let classroomOpenCourse = "";
+
+function loadGsiScript() {
+  return new Promise((resolve, reject) => {
+    if (window.google && google.accounts && google.accounts.oauth2) return resolve();
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("No se pudo cargar Google. Revisa tu conexión e intenta de nuevo."));
+    document.head.appendChild(s);
+  });
+}
+
+async function classroomFetch(path) {
+  const r = await fetch("https://classroom.googleapis.com/v1" + path, {
+    headers: { Authorization: "Bearer " + classroomToken }
+  });
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403) throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+    throw new Error("Google Classroom no respondió (" + r.status + "). Intenta de nuevo.");
+  }
+  return r.json();
+}
+
+function fmtDueDate(dueDate, dueTime) {
+  if (!dueDate) return "";
+  let s = dueDate.day + "/" + dueDate.month + "/" + dueDate.year;
+  if (dueTime && dueTime.hours != null) s += " " + String(dueTime.hours).padStart(2, "0") + ":" + String(dueTime.minutes || 0).padStart(2, "0");
+  return s;
+}
+
+async function connectClassroom() {
+  const errEl = $("cr-err");
+  if (CLASSROOM_CLIENT_ID === "PONER_CLIENT_ID_AQUI") {
+    if (errEl) showErr(errEl, "La conexión con Classroom aún no está configurada (falta el ID de cliente de Google).");
+    return;
+  }
+  try {
+    await loadGsiScript();
+    if (!classroomTokenClient) {
+      classroomTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLASSROOM_CLIENT_ID,
+        scope: CLASSROOM_SCOPES.join(" "),
+        callback: (resp) => {
+          if (resp && resp.access_token) {
+            classroomToken = resp.access_token;
+            renderClassroom();
+          } else if (errEl) {
+            showErr(errEl, "No se pudo conectar con Google. Intenta de nuevo.");
+          }
+        }
+      });
+    }
+    classroomTokenClient.requestAccessToken({ prompt: "consent" });
+  } catch (e) {
+    if (errEl) showErr(errEl, "No se pudo conectar: " + (e.message || e));
+  }
+}
+
+function disconnectClassroom() {
+  if (classroomToken && window.google && google.accounts && google.accounts.oauth2) {
+    try { google.accounts.oauth2.revoke(classroomToken, () => {}); } catch (e) {}
+  }
+  classroomToken = null;
+  classroomCourses = [];
+  classroomOpenCourse = "";
+  renderClassroom();
+}
+
+async function showCourseWork(courseId) {
+  const box = $("cr-work-" + courseId);
+  if (!box) return;
+  box.innerHTML = `<p class="muted">Cargando tareas…</p>`;
+  try {
+    const data = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork?pageSize=50");
+    const works = data.courseWork || [];
+    if (!works.length) { box.innerHTML = `<p class="muted">Esta clase no tiene tareas todavía.</p>`; return; }
+    box.innerHTML = works.map(w => `<div class="docline"><span><b>${esc(w.title || "Tarea")}</b>${w.dueDate ? ` <span class="muted">· Entrega: ${esc(fmtDueDate(w.dueDate, w.dueTime))}</span>` : ""}</span>
+      <span class="muted" id="cr-count-${esc(w.id)}">Contando entregas…</span></div>`).join("");
+    works.forEach(async (w) => {
+      const el = $("cr-count-" + w.id);
+      try {
+        const subs = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(w.id) + "/studentSubmissions?pageSize=100");
+        const list = subs.studentSubmissions || [];
+        // Entregada = el alumno la mandó (TURNED_IN, RETURNED o REJECTED); pendiente = NEW o CREATED.
+        const turned = list.filter(x => x.state === "TURNED_IN" || x.state === "RETURNED" || x.state === "REJECTED").length;
+        if (el) el.textContent = "Entregadas " + turned + " de " + list.length;
+      } catch (e) { if (el) el.textContent = "No se pudo contar las entregas."; }
+    });
+  } catch (e) {
+    box.innerHTML = `<p class="err">${esc(e.message || "No se pudieron cargar las tareas.")}</p>`;
+  }
+}
+
+async function renderClassroom() {
+  const s = $("section");
+  if (CLASSROOM_CLIENT_ID === "PONER_CLIENT_ID_AQUI") {
+    s.innerHTML = `
+    <div class="card"><h2>Classroom</h2>
+      <p class="hint">Aquí podrás ver tus clases de Google Classroom, tus tareas y cuántos alumnos ya entregaron, sin salir del portal.</p>
+      <p class="err">La conexión con Classroom aún no está configurada (falta el ID de cliente de Google).</p>
+      <button class="gold" id="btn-cr-connect">Conectar con Google Classroom</button>
+      <div id="cr-err" class="err"></div>
+    </div>`;
+    $("btn-cr-connect").addEventListener("click", connectClassroom);
+    return;
+  }
+  if (!classroomToken) {
+    s.innerHTML = `
+    <div class="card"><h2>Classroom</h2>
+      <p class="hint">Conecta tu cuenta de Google para ver aquí mismo tus clases de Classroom, tus tareas y cuántos alumnos ya entregaron, sin salir del portal.</p>
+      <p class="muted">Solo se lee tu información de Classroom (tus clases y tus tareas). No se cambia nada, no se guarda tu cuenta de Google en el portal y puedes desconectar cuando quieras.</p>
+      <button class="gold" id="btn-cr-connect">Conectar con Google Classroom</button>
+      <div id="cr-err" class="err"></div>
+    </div>`;
+    $("btn-cr-connect").addEventListener("click", connectClassroom);
+    return;
+  }
+  if (!classroomCourses.length) {
+    s.innerHTML = `<div class="card"><h2>Classroom</h2><p class="muted">Cargando tus clases…</p></div>`;
+    try {
+      const data = await classroomFetch("/courses?teacherId=me&pageSize=50");
+      classroomCourses = data.courses || [];
+    } catch (e) {
+      s.innerHTML = `<div class="card"><h2>Classroom</h2><p class="err">${esc(e.message || "No se pudieron cargar tus clases.")}</p>
+        <button class="ghost" id="btn-cr-retry">Intentar de nuevo</button> <button class="ghost" id="btn-cr-disconnect">Desconectar</button></div>`;
+      $("btn-cr-retry").addEventListener("click", () => { classroomCourses = []; renderClassroom(); });
+      $("btn-cr-disconnect").addEventListener("click", disconnectClassroom);
+      return;
+    }
+  }
+  s.innerHTML = `
+  <div class="card"><h2>Classroom</h2>
+    <p class="hint">Tus clases de Google Classroom. Toca "Ver tareas" para ver el trabajo de cada clase y cuántos alumnos entregaron.</p>
+    <div style="margin-bottom:10px"><button class="ghost small" id="btn-cr-disconnect">Desconectar</button></div>
+    ${classroomCourses.length ? classroomCourses.map(c => `
+      <div class="card" style="margin:10px 0">
+        <h2 style="font-size:16px">${esc(c.name || "Clase")}</h2>
+        <p class="muted">${esc(c.section || "")}${c.room ? " · " + esc(c.room) : ""}</p>
+        <div class="row">
+          ${c.alternateLink ? `<button class="small" data-cr-open="${esc(c.alternateLink)}">Ir a Classroom</button>` : ""}
+          <button class="small gold" data-cr-course="${esc(c.id)}">${classroomOpenCourse === c.id ? "Ocultar tareas" : "Ver tareas"}</button>
+        </div>
+        <div id="cr-work-${esc(c.id)}"></div>
+      </div>`).join("") : `<p class="muted">No tienes clases como maestro en Google Classroom.</p>`}
+  </div>`;
+  $("btn-cr-disconnect").addEventListener("click", disconnectClassroom);
+  s.querySelectorAll("[data-cr-open]").forEach(b => b.addEventListener("click", () => window.open(b.getAttribute("data-cr-open"), "_blank")));
+  s.querySelectorAll("[data-cr-course]").forEach(b => b.addEventListener("click", () => {
+    const id = b.getAttribute("data-cr-course");
+    classroomOpenCourse = (classroomOpenCourse === id) ? "" : id;
+    renderClassroom();
+  }));
+  if (classroomOpenCourse) showCourseWork(classroomOpenCourse);
 }
 
 // ---------- Cursos ----------
@@ -473,6 +661,8 @@ async function renderStudents() {
   }
   const course = courses[selCourse] || {};
   const teacherObj = isAdmin ? teachers.find(t => t.uid === selTeacher) : me;
+  // Enlace de Classroom del curso seleccionado: primero el propio del maestro, si no el del curso.
+  const classroomLink = ((teacherObj && teacherObj.classroomLinks) || {})[selCourse] || course.classroomUrl || "";
   const students = selCourse ? await fetchStudents(selCourse, selTeacher) : [];
   const courseOptions = myCourseIds.map(id => `<option value="${id}" ${id === selCourse ? "selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const teacherOptions = isAdmin ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
@@ -482,13 +672,15 @@ async function renderStudents() {
     <div class="row">
       <div><label>Curso</label><select id="sel-course">${courseOptions}</select></div>
       ${isAdmin ? `<div><label>Maestro/a</label><select id="sel-teacher">${teacherOptions}</select></div>` : ""}
+      <div><label>Classroom</label>${classroomLink ? `<button id="btn-classroom" class="gold" style="width:100%">Ir a mi Classroom</button>` : `<span class="muted">Sin enlace de Classroom para este curso</span>`}</div>
     </div>
     <div class="row" style="margin-top:12px">
       <button id="btn-export" class="gold">Exportar lista en Excel</button>
       <button id="btn-blank" class="ghost">Descargar plantilla en blanco</button>
+      <button id="btn-toggle-cols" class="ghost">${showAllCols ? "Ver tabla compacta" : "Ver tabla completa"}</button>
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
-    <table><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th>${isAdmin ? "<th>Acceso</th>" : ""}<th></th></tr>
+    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th>${isAdmin ? "<th>Acceso</th>" : ""}<th></th></tr>
     ${students.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td>
@@ -497,7 +689,7 @@ async function renderStudents() {
       <td><button class="small" data-edit="${st.id}">Editar</button></td></tr>
       <tr id="docs-row-${st.id}" class="hidden"><td colspan="${isAdmin ? 8 : 7}"><div id="docs-box-${st.id}"></div></td></tr>
       ${isAdmin ? `<tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>` : ""}`).join("") || `<tr><td colspan="${isAdmin ? 8 : 7}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
-    </table>
+    </table></div>
   </div>
   <div class="card"><h2>${editingStudentId ? "Editar alumno" : "Dar de alta a un alumno"}</h2>
     <div class="row">
@@ -517,6 +709,10 @@ async function renderStudents() {
   $("sel-course").addEventListener("change", (e) => { selCourse = e.target.value; selTeacher = ""; editingStudentId = null; renderStudents(); });
   const stSel = $("sel-teacher");
   if (stSel) stSel.addEventListener("change", (e) => { selTeacher = e.target.value; editingStudentId = null; renderStudents(); });
+  const btnClassroom = $("btn-classroom");
+  if (btnClassroom) btnClassroom.addEventListener("click", () => window.open(classroomLink, "_blank"));
+  const btnToggleCols = $("btn-toggle-cols");
+  if (btnToggleCols) btnToggleCols.addEventListener("click", () => { showAllCols = !showAllCols; renderStudents(); });
   $("btn-export").addEventListener("click", async () => {
     try {
       showErr($("exp-err"), "");
