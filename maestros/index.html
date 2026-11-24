@@ -62,7 +62,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 </head>
 <body>
 
@@ -1051,7 +1050,23 @@ function buildAttendanceSheet(wb, imageId, sheetName, course, teacher, students,
   });
 }
 
+// ExcelJS solo se carga cuando se exporta (no en cada visita al portal).
+let excelJSLoading = null;
+function ensureExcelJS() {
+  if (window.ExcelJS) return Promise.resolve();
+  if (excelJSLoading) return excelJSLoading;
+  excelJSLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
+    s.onload = () => resolve();
+    s.onerror = () => { excelJSLoading = null; reject(new Error("No se pudo cargar el generador de Excel. Revisa tu conexión e inténtalo de nuevo.")); };
+    document.head.appendChild(s);
+  });
+  return excelJSLoading;
+}
+
 async function exportAttendance(course, teacher, students, blank) {
+  await ensureExcelJS();
   const wb = new ExcelJS.Workbook();
   const imageId = wb.addImage({ base64: LOGO_BASE64, extension: "jpeg" });
   if (blank) {
