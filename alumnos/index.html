@@ -177,6 +177,11 @@ async function loadEnrollments() {
   }
   return { list, courses };
 }
+function fmtRecDate(d) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || "");
+  if (!m) return d || "";
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
+}
 function teacherContact(course, st) {
   // 1) El maestro guardado en la ficha del alumno al crear su cuenta: es el
   // maestro exacto de ese alumno, también en cursos con varios maestros.
@@ -218,12 +223,15 @@ async function enterApp() {
     const waText = "Hola, soy alumno/a de Gecatech del curso " + (course.name || "") + ".";
     // Enlace de Classroom: 1) el de su propio maestro; 2) el del curso como respaldo.
     const classroomUrl = (st.teacherClassroomUrl || "").trim() || (course.classroomUrl || "").trim();
+    // Grabaciones del curso (courses/{id}.recordings).
+    const recs = Array.isArray(course.recordings) ? course.recordings : [];
     return `<div class="card">
       <h2>${esc(course.name || "Curso")}</h2>
       <p class="hint">${esc(course.schedule || "")}</p>
       <p><strong>Maestro/a:</strong> ${esc(teacherLabel)}</p>
       <p><a class="btn gold" target="_blank" rel="noopener" href="https://wa.me/${wa.wa}?text=${encodeURIComponent(waText)}">WhatsApp con ${esc(contact ? contact.label : "informes generales")}</a> <span class="muted">${esc(wa.phone)}</span></p>
       ${classroomUrl ? `<p><a class="btn" target="_blank" rel="noopener" href="${esc(classroomUrl)}">Entrar a mi Classroom</a></p>` : ""}
+      ${recs.length ? `<div style="margin-top:10px"><h3>Grabaciones</h3>${recs.map(r => `<p><a target="_blank" rel="noopener" href="${esc(r.url || "")}">${esc(r.title || "Grabación")}</a>${r.date ? ` <span class="muted">${fmtRecDate(r.date)}</span>` : ""}</p>`).join("")}</div>` : ""}
       <p><strong>Fecha de inicio:</strong> ${esc(st.startDate || "—")} &nbsp; <strong>Generación:</strong> ${st.generation ? esc(st.generation) : "—"}</p>
       <div id="docs-${st.id}"><p class="muted">Cargando documentos…</p></div>
     </div>`;
