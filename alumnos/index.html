@@ -221,6 +221,7 @@ async function enterApp() {
       <p class="hint">${esc(course.schedule || "")}</p>
       <p><strong>Maestro/a:</strong> ${esc(teacherLabel)}</p>
       <p><a class="btn gold" target="_blank" rel="noopener" href="https://wa.me/${wa.wa}?text=${encodeURIComponent(waText)}">WhatsApp con ${esc(contact ? contact.label : "informes generales")}</a> <span class="muted">${esc(wa.phone)}</span></p>
+      ${course.classroomUrl ? `<p><a class="btn" target="_blank" rel="noopener" href="${esc(course.classroomUrl)}">Entrar a mi Classroom</a></p>` : ""}
       <p><strong>Fecha de inicio:</strong> ${esc(st.startDate || "—")} &nbsp; <strong>Generación:</strong> ${st.generation ? esc(st.generation) : "—"}</p>
       <div id="docs-${st.id}"><p class="muted">Cargando documentos…</p></div>
     </div>`;
