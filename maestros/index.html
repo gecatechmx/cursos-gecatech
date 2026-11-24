@@ -111,7 +111,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let me = null;          // {uid, name, email, role, courses[], active}
-let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl}
+let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}]}
 let currentTab = "alumnos";
 let selCourse = "";
 let selTeacher = "";
@@ -239,12 +239,14 @@ async function renderCourses() {
     <td><input type="date" value="${esc(c.startDate || "")}" data-course="${id}" data-field="startDate" style="max-width:170px"></td>
     <td><input type="number" min="6" max="24" value="${c.durationMonths || 12}" data-course="${id}" data-field="durationMonths" style="max-width:80px"> meses</td>
     <td><input type="url" value="${esc(c.classroomUrl || "")}" data-course="${id}" data-field="classroomUrl" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></td>
+    <td><button class="small ghost" data-rec-course="${id}">Grabaciones (${(c.recordings || []).length})</button></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
   <div class="card"><h2>Cursos</h2>
     <p class="hint">La duración y la fecha de inicio se usan para calcular la generación de cada alumno. Cambia los datos y toca Guardar.</p>
     ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div>` : `
-    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th></th></tr>${rows}</table>
+    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th></th></tr>${rows}</table>
+    <div id="rec-editor"></div>
     <div id="course-msg" class="okmsg"></div>`}
   </div>`;
   const seed = $("btn-seed");
@@ -264,6 +266,54 @@ async function renderCourses() {
     await db.collection("courses").doc(id).update({ startDate, durationMonths, classroomUrl });
     courses[id].startDate = startDate; courses[id].durationMonths = durationMonths; courses[id].classroomUrl = classroomUrl;
     showOk($("course-msg"), "Guardado: " + courses[id].name);
+  }));
+  s.querySelectorAll("[data-rec-course]").forEach(b => b.addEventListener("click", () => {
+    renderRecEditor(b.getAttribute("data-rec-course"));
+  }));
+}
+
+// ---------- Grabaciones por curso (se guardan en courses/{id}.recordings) ----------
+function renderRecEditor(courseId) {
+  const box = $("rec-editor");
+  if (!box) return;
+  const c = courses[courseId];
+  if (!c) { box.innerHTML = ""; return; }
+  const recs = Array.isArray(c.recordings) ? c.recordings : [];
+  box.innerHTML = `
+  <div class="card" style="margin-top:12px"><h3>Grabaciones — ${esc(c.name)}</h3>
+    <p class="hint">Pega aquí el enlace de cada clase grabada (normalmente el enlace de Google Drive de la grabación de Meet). Los alumnos la verán en su tarjeta del curso.</p>
+    ${recs.length ? recs.map((r, i) => `<div class="docline"><span>${esc(r.title || "Grabación")}</span><span class="muted">${esc(r.date || "")}</span>
+      <a target="_blank" rel="noopener" href="${esc(r.url || "")}">Abrir</a>
+      <a href="#" data-rec-del="${i}">Quitar</a></div>`).join("") : `<p class="hint">Aún no hay grabaciones en este curso.</p>`}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <input id="rec-title" placeholder="Título (ej. Clase 10 – Lean Manufacturing – 24 nov 2026)" style="flex:2;min-width:220px">
+      <input id="rec-url" type="url" placeholder="Enlace de la grabación (Google Drive)" style="flex:2;min-width:220px">
+      <input id="rec-date" type="date" style="max-width:170px">
+      <button class="gold" id="rec-add">Agregar grabación</button>
+    </div>
+    <div id="rec-msg" class="okmsg"></div><div id="rec-err" class="err"></div>
+  </div>`;
+  const saveRecs = async (arr) => {
+    await db.collection("courses").doc(courseId).update({ recordings: arr });
+    courses[courseId].recordings = arr;
+    const btn = document.querySelector(`[data-rec-course="${courseId}"]`);
+    if (btn) btn.textContent = "Grabaciones (" + arr.length + ")";
+  };
+  $("rec-add").addEventListener("click", async () => {
+    const title = ($("rec-title").value || "").trim();
+    const url = ($("rec-url").value || "").trim();
+    const date = $("rec-date").value || "";
+    if (!title || !url) { $("rec-err").textContent = "Escribe el título y el enlace de la grabación."; return; }
+    if (!/^https?:\/\//i.test(url)) { $("rec-err").textContent = "El enlace debe empezar con http:// o https://."; return; }
+    await saveRecs([...recs, { title, url, date }]);
+    renderRecEditor(courseId);
+    showOk($("rec-msg"), "Grabación agregada.");
+  });
+  box.querySelectorAll("[data-rec-del]").forEach(a => a.addEventListener("click", async (e) => {
+    e.preventDefault();
+    await saveRecs(recs.filter((_, i) => i !== parseInt(a.getAttribute("data-rec-del"), 10)));
+    renderRecEditor(courseId);
+    showOk($("rec-msg"), "Grabación quitada.");
   }));
 }
 
