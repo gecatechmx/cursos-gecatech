@@ -111,7 +111,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let me = null;          // {uid, name, email, role, courses[], active}
-let courses = {};       // id -> {name, schedule, durationMonths, startDate}
+let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl}
 let currentTab = "alumnos";
 let selCourse = "";
 let selTeacher = "";
@@ -225,8 +225,8 @@ async function renderSection() {
 
 // ---------- Cursos ----------
 const DEFAULT_COURSES = [
-  { id: "industrial", name: "Auxiliar en Ingeniería Industrial", schedule: "Martes 8-10 p.m.", teacher: "Anghelo Antonio Carrillo Mendoza", startDate: "2026-09-22", durationMonths: 12 },
-  { id: "administrativo", name: "Auxiliar Administrativo", schedule: "Miércoles 8-10 p.m.", teacher: "Anghelo Antonio Carrillo Mendoza", startDate: "2026-11-18", durationMonths: 12 },
+  { id: "industrial", name: "Auxiliar en Ingeniería Industrial", schedule: "Martes 8-10 p.m.", teacher: "Anghelo Antonio Carrillo Mendoza", startDate: "2026-09-22", durationMonths: 12, classroomUrl: "https://classroom.google.com/c/ODY5NzIyNzA1NTA0" },
+  { id: "administrativo", name: "Auxiliar Administrativo", schedule: "Miércoles 8-10 p.m.", teacher: "Anghelo Antonio Carrillo Mendoza", startDate: "2026-11-18", durationMonths: 12, classroomUrl: "https://classroom.google.com/c/ODgzMzYxNzgxNzQx" },
   { id: "rrhh", name: "Auxiliar en Recursos Humanos", schedule: "Jueves 7-9 p.m.", teacher: "Eribet Duran", startDate: "", durationMonths: 12 },
   { id: "asistente", name: "Asistente Educativo", schedule: "Varios horarios", teacher: "Varios maestros", startDate: "", durationMonths: 12 },
   { id: "psicologia", name: "Psicología Educativa", schedule: "Varios horarios", teacher: "Varias maestras", startDate: "", durationMonths: 12 },
@@ -238,18 +238,19 @@ async function renderCourses() {
     <tr><td>${esc(c.name)}</td><td>${esc(c.schedule || "")}</td>
     <td><input type="date" value="${esc(c.startDate || "")}" data-course="${id}" data-field="startDate" style="max-width:170px"></td>
     <td><input type="number" min="6" max="24" value="${c.durationMonths || 12}" data-course="${id}" data-field="durationMonths" style="max-width:80px"> meses</td>
+    <td><input type="url" value="${esc(c.classroomUrl || "")}" data-course="${id}" data-field="classroomUrl" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
   <div class="card"><h2>Cursos</h2>
     <p class="hint">La duración y la fecha de inicio se usan para calcular la generación de cada alumno. Cambia los datos y toca Guardar.</p>
     ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div>` : `
-    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th></th></tr>${rows}</table>
+    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th></th></tr>${rows}</table>
     <div id="course-msg" class="okmsg"></div>`}
   </div>`;
   const seed = $("btn-seed");
   if (seed) seed.addEventListener("click", async () => {
     for (const c of DEFAULT_COURSES) {
-      await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher });
+      await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "" });
     }
     await loadCourses();
     showOk($("seed-msg"), "Cursos cargados.");
@@ -259,8 +260,9 @@ async function renderCourses() {
     const id = b.getAttribute("data-save-course");
     const startDate = s.querySelector(`[data-course="${id}"][data-field="startDate"]`).value;
     const durationMonths = parseInt(s.querySelector(`[data-course="${id}"][data-field="durationMonths"]`).value, 10) || 12;
-    await db.collection("courses").doc(id).update({ startDate, durationMonths });
-    courses[id].startDate = startDate; courses[id].durationMonths = durationMonths;
+    const classroomUrl = (s.querySelector(`[data-course="${id}"][data-field="classroomUrl"]`).value || "").trim();
+    await db.collection("courses").doc(id).update({ startDate, durationMonths, classroomUrl });
+    courses[id].startDate = startDate; courses[id].durationMonths = durationMonths; courses[id].classroomUrl = classroomUrl;
     showOk($("course-msg"), "Guardado: " + courses[id].name);
   }));
 }
