@@ -177,7 +177,15 @@ async function loadEnrollments() {
   }
   return { list, courses };
 }
-function teacherContact(course) {
+function teacherContact(course, st) {
+  // 1) El maestro guardado en la ficha del alumno al crear su cuenta: es el
+  // maestro exacto de ese alumno, también en cursos con varios maestros.
+  if (st && st.teacherWhatsApp) {
+    const name = (st.teacherName || "").trim();
+    const mapped = name && TEACHER_CONTACTS[name];
+    return { label: (mapped && mapped.label) || name || "Tu maestro/a", phone: (mapped && mapped.phone) || "", wa: String(st.teacherWhatsApp) };
+  }
+  // 2) El maestro del curso (sirve para cursos de un solo maestro).
   const name = course && course.teacher ? String(course.teacher).trim() : "";
   if (name && TEACHER_CONTACTS[name]) return { name, ...TEACHER_CONTACTS[name] };
   return null;
@@ -204,7 +212,7 @@ async function enterApp() {
   }
   s.innerHTML = list.map(st => {
     const course = courses[st.courseId] || {};
-    const contact = teacherContact(course);
+    const contact = teacherContact(course, st);
     const wa = contact || GENERAL_CONTACT;
     const teacherLabel = contact ? contact.label : "Tu maestro/a";
     const waText = "Hola, soy alumno/a de Gecatech del curso " + (course.name || "") + ".";
