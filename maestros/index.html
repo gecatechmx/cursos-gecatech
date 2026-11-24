@@ -690,16 +690,17 @@ async function renderDocsBox(box, studentId, teacherId) {
 
 <script>
 // ---------- Exportar lista en Excel (igual a la plantilla, con logo) ----------
-async function exportAttendance(course, teacher, students, blank) {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("Lista de Asistencia");
+// Arma UNA hoja con el formato exacto de la plantilla: logo, encabezado
+// B2–B5 (curso/horario/maestro), fila 9 de encabezados, grupos de mes de
+// 4 columnas y alumnos desde la fila 10.
+function buildAttendanceSheet(wb, imageId, sheetName, course, teacher, students, blank) {
+  const ws = wb.addWorksheet(sheetName);
   // Anchos iguales a la plantilla original
   ws.getColumn(1).width = 36.57;
   ws.getColumn(2).width = 22.86;
   ws.getColumn(3).width = 18.29;
   ws.getColumn(4).width = 22.86;
   // Logo de Gecatech arriba (columnas A, filas 1-6, celdas vacías en la plantilla)
-  const imageId = wb.addImage({ base64: LOGO_BASE64, extension: "jpeg" });
   ws.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: 150, height: 115 } });
   // Encabezado, igual que la plantilla
   ws.getCell("B2").value = "Registro de asistencia:";
@@ -740,6 +741,32 @@ async function exportAttendance(course, teacher, students, blank) {
     ws.getCell(r, 3).value = st.phone || "";
     ws.getCell(r, 4).value = st.generation ? Number(st.generation) : "";
   });
+}
+
+async function exportAttendance(course, teacher, students, blank) {
+  const wb = new ExcelJS.Workbook();
+  const imageId = wb.addImage({ base64: LOGO_BASE64, extension: "jpeg" });
+  if (blank) {
+    // Plantilla en blanco: una sola hoja, sin alumnos ni datos del curso
+    buildAttendanceSheet(wb, imageId, "Lista de Asistencia", course, teacher, [], true);
+  } else {
+    // Una pestaña por generación (2027, 2028, ...); sin generación, al final
+    const groups = {};
+    (students || []).forEach((st) => {
+      const g = (st.generation == null ? "" : String(st.generation).trim());
+      (groups[g] = groups[g] || []).push(st);
+    });
+    const genKeys = Object.keys(groups).filter((g) => g !== "").sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+    if (groups[""]) genKeys.push("");
+    if (genKeys.length === 0) {
+      buildAttendanceSheet(wb, imageId, "Lista de Asistencia", course, teacher, [], false);
+    } else {
+      genKeys.forEach((g) => {
+        const sheetName = g === "" ? "Sin generación" : ("Generación " + g);
+        buildAttendanceSheet(wb, imageId, sheetName, course, teacher, groups[g], false);
+      });
+    }
+  }
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const a = document.createElement("a");
