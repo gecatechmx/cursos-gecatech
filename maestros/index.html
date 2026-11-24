@@ -486,7 +486,6 @@ async function renderStudents() {
     <div class="row" style="margin-top:12px">
       <button id="btn-export" class="gold">Exportar lista en Excel</button>
       <button id="btn-blank" class="ghost">Descargar plantilla en blanco</button>
-      ${isAdmin ? `<label class="ghost" style="text-align:center;cursor:pointer;padding:10px 16px;border-radius:8px">Importar alumnos desde Excel<input id="file-import" type="file" accept=".xlsx" style="display:none"></label>` : ""}
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
     <table><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th>${isAdmin ? "<th>Acceso</th>" : ""}<th></th></tr>
@@ -531,14 +530,6 @@ async function renderStudents() {
       await exportAttendance(course, teacherObj, [], true);
       showOk($("exp-msg"), "Plantilla en blanco descargada.");
     } catch (e) { showErr($("exp-err"), "No se pudo descargar: " + (e.message || e)); }
-  });
-  const imp = $("file-import");
-  if (imp) imp.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try { await importStudentsFromExcel(file, selCourse, selTeacher); }
-    catch (err) { showErr($("exp-err"), "No se pudo importar: " + (err.message || err)); }
-    e.target.value = "";
   });
   s.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", async () => {
     const st = students.find(x => x.id === b.getAttribute("data-edit"));
@@ -763,37 +754,6 @@ async function exportAttendance(course, teacher, students, blank) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-// ---------- Importar alumnos desde el Excel de la lista ----------
-async function importStudentsFromExcel(file, courseId, teacherId) {
-  const buf = await file.arrayBuffer();
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buf);
-  const ws = wb.worksheets[0];
-  let headerRow = -1;
-  ws.eachRow((row, n) => {
-    if (headerRow === -1 && String(row.getCell(1).value || "").trim() === "Apellido y Nombre") headerRow = n;
-  });
-  if (headerRow === -1) throw new Error("No encontré la columna 'Apellido y Nombre' en el archivo.");
-  const rows = [];
-  ws.eachRow((row, n) => {
-    if (n <= headerRow) return;
-    const name = String(row.getCell(1).value || "").trim();
-    if (!name) return;
-    const curp = String(row.getCell(2).value || "").trim();
-    const phone = String(row.getCell(3).value || "").trim();
-    const gen = row.getCell(4).value;
-    rows.push({ name, curp, phone, generation: gen ? Number(gen) : "" });
-  });
-  if (!rows.length) throw new Error("El archivo no trae alumnos debajo del encabezado.");
-  if (!confirm("Se van a dar de alta " + rows.length + " alumnos en este curso. ¿Continuar?")) return;
-  let n = 0;
-  for (const r of rows) {
-    await db.collection("students").add({ ...r, courseId, teacherId, startDate: "", active: true, createdAt: Date.now() + n });
-    n++;
-  }
-  showOk($("exp-msg"), "Se dieron de alta " + n + " alumnos.");
-  renderStudents();
-}
 </script>
 </body>
 </html>
