@@ -252,10 +252,15 @@ function enterApp() {
   renderSection();
 }
 async function renderSection() {
-  if (currentTab === "maestros") renderTeachers();
-  else if (currentTab === "cursos") renderCourses();
-  else if (currentTab === "classroom") renderClassroom();
-  else renderStudents();
+  try {
+    if (currentTab === "maestros") await renderTeachers();
+    else if (currentTab === "cursos") await renderCourses();
+    else if (currentTab === "classroom") await renderClassroom();
+    else await renderStudents();
+  } catch (e) {
+    const s = $("section");
+    if (s) s.innerHTML = `<div class="card"><h2>No se pudo cargar esta sección</h2><p class="err">${esc(e.message || e)}</p><p class="hint">Intenta recargar la página. Si el error sigue, avisa al administrador.</p></div>`;
+  }
 }
 
 // ---------- Google Classroom (API oficial, solo lectura) ----------
@@ -521,7 +526,7 @@ async function renderCourses() {
   s.innerHTML = `
   <div class="card"><h2>Cursos</h2>
     <p class="hint">La duración y la fecha de inicio se usan para calcular la generación de cada alumno. Cambia los datos y toca Guardar.</p>
-    ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div>` : `
+    ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div><div id="seed-err" class="err"></div>` : `
     <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Diplomados visibles</th><th></th></tr>${rows}</table>
     <div id="rec-editor"></div>
     <div id="course-msg" class="okmsg"></div>`}
@@ -537,12 +542,16 @@ async function renderCourses() {
   </div>`;
   const seed = $("btn-seed");
   if (seed) seed.addEventListener("click", async () => {
-    for (const c of DEFAULT_COURSES) {
-      await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "" });
+    try {
+      for (const c of DEFAULT_COURSES) {
+        await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "" });
+      }
+      await loadCourses();
+      showOk($("seed-msg"), "Cursos cargados.");
+      renderCourses();
+    } catch (e) {
+      showErr($("seed-err"), "No se pudieron cargar los cursos: " + (e.message || e));
     }
-    await loadCourses();
-    showOk($("seed-msg"), "Cursos cargados.");
-    renderCourses();
   });
   s.querySelectorAll("[data-save-course]").forEach(b => b.addEventListener("click", async () => {
     const id = b.getAttribute("data-save-course");
