@@ -249,7 +249,7 @@ async function renderCourses() {
   const seed = $("btn-seed");
   if (seed) seed.addEventListener("click", async () => {
     for (const c of DEFAULT_COURSES) {
-      await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "" });
+      await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher });
     }
     await loadCourses();
     showOk($("seed-msg"), "Cursos cargados.");
@@ -304,7 +304,7 @@ async function renderTeachers() {
     if (!selCourses.length) { showErr($("nt-err"), "Elige al menos un curso para este maestro."); return; }
     $("btn-create-teacher").disabled = true;
     try {
-      const secondary = firebase.initializeApp(firebaseConfig, "secondary");
+      const secondary = getSecondaryApp();
       const cred = await secondary.auth().createUserWithEmailAndPassword(email, pass);
       const uid = cred.user.uid;
       await secondary.auth().signOut();
@@ -328,6 +328,37 @@ async function renderTeachers() {
 
 <script>
 // ---------- Alumnos ----------
+// Contacto público de cada maestro (los mismos números de la página de cursos):
+// se guarda en la ficha del alumno al crearle su cuenta, para que el Portal
+// Alumnos muestre el WhatsApp de SU maestro.
+const TEACHER_CONTACTS = {
+  "Anghelo Antonio Carrillo Mendoza": { phone: "639 174 38 91", wa: "526391743891" },
+  "Anghelo Carrillo": { phone: "639 174 38 91", wa: "526391743891" },
+  "Eribet Duran": { phone: "639 115 52 13", wa: "526391155213" },
+  "Enna Eribet Duran Villalpando": { phone: "639 115 52 13", wa: "526391155213" },
+  "Denny Román": { phone: "656 662 93 76", wa: "526566629376" },
+  "Mónica Tintos": { phone: "332 182 72 82", wa: "523321827282" },
+  "Adriana Villanueva": { phone: "656 577 15 72", wa: "526565771572" },
+  "Elisa Cárdenas": { phone: "656 279 88 34", wa: "526562798834" },
+  "Claudia Gomez": { phone: "636 134 02 31", wa: "526361340231" },
+  "Claudia Gómez": { phone: "636 134 02 31", wa: "526361340231" },
+  "Jazmin Stephens Cruz": { phone: "322 189 15 15", wa: "523221891515" },
+  "Jazmín Stephens Cruz": { phone: "322 189 15 15", wa: "523221891515" },
+  "Jazmin Liseth Stephens Cruz": { phone: "322 189 15 15", wa: "523221891515" },
+  "Jazmín Liseth Stephens Cruz": { phone: "322 189 15 15", wa: "523221891515" },
+  "Lizeth Gutiérrez": { phone: "614 609 25 97", wa: "526146092597" },
+  "Lupita Ramos": { phone: "444 453 43 51", wa: "524444534351" },
+  "Guadalupe Ramos": { phone: "444 453 43 51", wa: "524444534351" }
+};
+// Cuenta de acceso de alumno: se crea con una app secundaria de Firebase
+// para no cerrar la sesión del admin. Se reutiliza si ya existe.
+let secondaryApp = null;
+function getSecondaryApp() {
+  if (!secondaryApp) {
+    secondaryApp = firebase.apps.find(a => a.name === "secondary") || firebase.initializeApp(firebaseConfig, "secondary");
+  }
+  return secondaryApp;
+}
 async function listTeachers() {
   const snap = await db.collection("teachers").where("active", "!=", false).get();
   const out = []; snap.forEach(d => out.push({ uid: d.id, ...d.data() }));
@@ -371,13 +402,15 @@ async function renderStudents() {
       ${isAdmin ? `<label class="ghost" style="text-align:center;cursor:pointer;padding:10px 16px;border-radius:8px">Importar alumnos desde Excel<input id="file-import" type="file" accept=".xlsx" style="display:none"></label>` : ""}
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
-    <table><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th><th></th></tr>
+    <table><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th>${isAdmin ? "<th>Acceso</th>" : ""}<th></th></tr>
     ${students.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td>
       <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
+      ${isAdmin ? `<td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>` : ""}
       <td><button class="small" data-edit="${st.id}">Editar</button></td></tr>
-      <tr id="docs-row-${st.id}" class="hidden"><td colspan="7"><div id="docs-box-${st.id}"></div></td></tr>`).join("") || `<tr><td colspan="7" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
+      <tr id="docs-row-${st.id}" class="hidden"><td colspan="${isAdmin ? 8 : 7}"><div id="docs-box-${st.id}"></div></td></tr>
+      ${isAdmin ? `<tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>` : ""}`).join("") || `<tr><td colspan="${isAdmin ? 8 : 7}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table>
   </div>
   <div class="card"><h2>${editingStudentId ? "Editar alumno" : "Dar de alta a un alumno"}</h2>
@@ -440,6 +473,54 @@ async function renderStudents() {
       row.classList.remove("hidden");
       await renderDocsBox(box, id, selTeacher);
     } else row.classList.add("hidden");
+  }));
+  s.querySelectorAll("[data-account]").forEach(b => b.addEventListener("click", () => {
+    const row = $("acct-row-" + b.getAttribute("data-account"));
+    if (row) row.classList.toggle("hidden");
+  }));
+  s.querySelectorAll("[data-create-account]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-create-account");
+    const email = $("acct-email-" + id).value.trim();
+    const pass = $("acct-pass-" + id).value;
+    showErr($("acct-err-" + id), ""); showOk($("acct-msg-" + id), "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showErr($("acct-err-" + id), "Escribe un correo válido."); return; }
+    if (pass.length < 6) { showErr($("acct-err-" + id), "La contraseña debe tener mínimo 6 caracteres."); return; }
+    b.disabled = true;
+    try {
+      const secondary = getSecondaryApp();
+      const cred = await secondary.auth().createUserWithEmailAndPassword(email, pass);
+      await secondary.auth().signOut();
+      const update = { authUid: cred.user.uid };
+      let teacherNote = "";
+      try {
+        const stDoc = await db.collection("students").doc(id).get();
+        const teacherId = stDoc.exists ? (stDoc.data().teacherId || "") : "";
+        if (teacherId) {
+          const tDoc = await db.collection("teachers").doc(teacherId).get();
+          const tName = tDoc.exists ? (tDoc.data().name || "").trim() : "";
+          if (tName) {
+            update.teacherName = tName;
+            const contact = TEACHER_CONTACTS[tName];
+            if (contact) update.teacherWhatsApp = contact.wa;
+          }
+        }
+      } catch (lookupErr) {
+        teacherNote = " (No se pudo guardar el maestro en su ficha, pero la cuenta sí quedó creada.)";
+      }
+      await db.collection("students").doc(id).update(update);
+      showOk($("acct-msg-" + id), "Cuenta de acceso creada para " + email + "." + teacherNote);
+      renderStudents();
+    } catch (e) {
+      showErr($("acct-err-" + id), "No se pudo crear: " + (e.code === "auth/email-already-in-use" ? "ese correo ya tiene cuenta." : (e.message || e.code)));
+    } finally { b.disabled = false; }
+  }));
+  s.querySelectorAll("[data-unlink]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-unlink");
+    if (!confirm("¿Quitar el acceso de este alumno al Portal Alumnos? Su cuenta de acceso quedará sin vincular.")) return;
+    try {
+      await db.collection("students").doc(id).update({ authUid: firebase.firestore.FieldValue.delete() });
+      renderStudents();
+    } catch (e) { showErr($("exp-err"), "No se pudo quitar el acceso: " + (e.message || e)); }
   }));
   const cancel = $("btn-cancel-edit");
   if (cancel) cancel.addEventListener("click", () => { editingStudentId = null; renderStudents(); });
