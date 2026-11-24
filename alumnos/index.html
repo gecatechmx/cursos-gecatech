@@ -192,6 +192,28 @@ function fmtRecDate(d) {
   if (!m) return d || "";
   return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
 }
+// createdAt puede ser Timestamp de servidor, número o null: normalizar a ms.
+function tsMillis(v) {
+  if (!v) return 0;
+  if (typeof v.toMillis === "function") return v.toMillis();
+  if (typeof v === "number") return v;
+  const d = new Date(v);
+  return isNaN(d) ? 0 : d.getTime();
+}
+function fmtAvDate(v) {
+  const ms = tsMillis(v);
+  if (!ms) return "";
+  return new Date(ms).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
+}
+// ¿Hoy es día de clase de este curso? Busca el día de la semana en el horario
+// ("Martes 8-10 p. m.", "Lunes y Miércoles…"). "Varios horarios" no tiene un
+// único día, así que no muestra la banda.
+function isClassToday(schedule) {
+  const days = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+  const norm = String(schedule || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const found = norm.match(/\b(domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/g) || [];
+  return found.includes(days[new Date().getDay()]);
+}
 function teacherContact(course, st) {
   // 1) El maestro guardado en la ficha del alumno al crear su cuenta: es el
   // maestro exacto de ese alumno, también en cursos con varios maestros.
@@ -225,6 +247,24 @@ async function enterApp() {
     s.innerHTML = `<div class="card"><h2>Sin cursos vinculados</h2><p>Tu cuenta aún no está vinculada a ningún curso. Pide a tu maestro o al administrador que te vincule.</p></div>`;
     return;
   }
+  // Avisos del maestro por curso (solo los activos, los 5 más recientes).
+  // Sin orderBy en la consulta (evita necesitar un índice compuesto):
+  // se ordena en el cliente por fecha descendente.
+  const announcementsByCourse = {};
+  await Promise.all([...new Set(list.map(s => s.courseId))].filter(Boolean).map(async cid => {
+    try {
+      const snap = await db.collection("announcements").where("courseId", "==", cid).where("active", "==", true).get();
+      const arr = []; snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+      arr.sort((a, b) => tsMillis(b.createdAt) - tsMillis(a.createdAt));
+      announcementsByCourse[cid] = arr.slice(0, 5);
+    } catch (e) { announcementsByCourse[cid] = []; }
+  }));
+  // Catálogo de diplomados (para mostrar los nombres en "Mis diplomados").
+  let diplomasCatalog = {};
+  try {
+    const snap = await db.collection("diplomas").get();
+    snap.forEach(d => { diplomasCatalog[d.id] = d.data().name || ""; });
+  } catch (e) { diplomasCatalog = {}; }
   s.innerHTML = list.map(st => {
     const course = courses[st.courseId] || {};
     const contact = teacherContact(course, st);
@@ -243,13 +283,33 @@ async function enterApp() {
       if (!d) return true;                 // grabación sin fecha: se muestra
       return d >= joined;                  // solo desde su ingreso (incluido)
     });
+    // Avisos del maestro de este curso (los 5 más recientes).
+    const avs = announcementsByCourse[st.courseId] || [];
+    const avHtml = `<div style="margin-top:10px"><h3>Avisos del maestro</h3>` + (avs.length ? avs.map(a => {
+      const ms = tsMillis(a.createdAt);
+      const isNew = ms && (Date.now() - ms) < 7 * 24 * 60 * 60 * 1000;
+      return `<p><strong>${esc(a.title || "Aviso")}</strong>${isNew ? ` <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">Nuevo</span>` : ""} <span class="muted">${fmtAvDate(a.createdAt)}</span><br>${esc(a.text || "")}</p>`;
+    }).join("") : `<p class="muted">No hay avisos por ahora.</p>`) + `</div>`;
+    // Mis diplomados: solo si el curso tiene visible la sección y el alumno
+    // tiene diplomados registrados. Si no, no se muestra nada.
+    const myDiplomas = st.diplomas || {};
+    const dipEntries = Object.entries(myDiplomas).filter(([id]) => diplomasCatalog[id]);
+    const dipHtml = (course.showDiplomas === true && dipEntries.length)
+      ? `<div style="margin-top:10px"><h3>Mis diplomados</h3>` + dipEntries.map(([id, status]) => {
+          const label = status === "completado" ? "Completado" : status === "en_curso" ? "En curso" : "Pendiente";
+          return `<p>${esc(diplomasCatalog[id])} <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#dcebf7;color:#0b2a4a">${label}</span></p>`;
+        }).join("") + `</div>`
+      : "";
     return `<div class="card">
       <h2>${esc(course.name || "Curso")}</h2>
+      ${isClassToday(course.schedule) ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:8px 10px;font-weight:600">Hoy tienes clase de ${esc(course.name || "este curso")}</p>` : ""}
       <p class="hint">${esc(course.schedule || "")}</p>
       <p><strong>Maestro/a:</strong> ${esc(teacherLabel)}</p>
       <p><a class="btn gold" target="_blank" rel="noopener" href="https://wa.me/${wa.wa}?text=${encodeURIComponent(waText)}">WhatsApp con ${esc(contact ? contact.label : "informes generales")}</a> <span class="muted">${esc(wa.phone)}</span></p>
       ${classroomUrl ? `<p><a class="btn" target="_blank" rel="noopener" href="${esc(classroomUrl)}">Entrar a mi Classroom</a></p>` : ""}
       ${recs.length ? `<div style="margin-top:10px"><h3>Grabaciones</h3>${recs.map(r => `<p><a target="_blank" rel="noopener" href="${esc(r.url || "")}">${esc(r.title || "Grabación")}</a>${r.date ? ` <span class="muted">${fmtRecDate(r.date)}</span>` : ""}</p>`).join("")}</div>` : ""}
+      ${avHtml}
+      ${dipHtml}
       <p><strong>Fecha de inicio:</strong> ${esc(st.startDate || "—")} &nbsp; <strong>Generación:</strong> ${st.generation ? esc(st.generation) : "—"}</p>
       <div id="docs-${st.id}"><p class="muted">Cargando documentos…</p></div>
     </div>`;
