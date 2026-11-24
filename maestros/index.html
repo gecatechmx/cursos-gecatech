@@ -121,6 +121,18 @@ const CLASSROOM_SCOPES = [
   "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
   "https://www.googleapis.com/auth/classroom.rosters.readonly"
 ];
+
+// ---------- Respaldo automático en Google Drive ----------
+// Cada maestro puede conectar su Google Drive (una sola vez) para que
+// cada PDF que suba él o sus alumnos se copie también a su Drive.
+// El respaldo es OPCIONAL: sin conexión, los archivos siguen guardados y
+// visibles en el portal (Firebase Storage). El cliente de OAuth es OTRO
+// distinto al de Classroom: se crea en Google Cloud Console solo para
+// Drive (ver functions/README.md). Sin él, la tarjeta muestra que falta
+// la configuración y nada se bloquea.
+const DRIVE_CLIENT_ID = "PONER_CLIENT_ID_DRIVE_AQUI";
+// Alcance mínimo: solo archivos que crea la propia app (drive.file).
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
@@ -197,8 +209,8 @@ $("btn-login").addEventListener("click", async () => {
   if (!email || !pass) { showErr($("login-error"), "Escribe tu correo y tu contraseña."); return; }
   $("btn-login").disabled = true;
   try {
-    await loadCourses();
     const cred = await auth.signInWithEmailAndPassword(email, pass);
+    await loadCourses();
     const profile = await loadProfile(cred.user.uid, cred.user.email);
     if (!profile) {
       await auth.signOut();
@@ -322,6 +334,81 @@ function disconnectClassroom() {
   classroomCourses = [];
   classroomOpenCourse = "";
   renderClassroom();
+}
+
+// ---------- Respaldo en Google Drive ----------
+let driveCodeClient = null;
+let driveConn = null; // {email, connectedAt} del maestro seleccionado (o null)
+
+function loadFunctionsScript() {
+  return new Promise((resolve, reject) => {
+    if (window.firebase && firebase.functions) return resolve();
+    const s = document.createElement("script");
+    s.src = "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("No se pudo cargar la conexión con el servidor. Revisa tu conexión e intenta de nuevo."));
+    document.head.appendChild(s);
+  });
+}
+
+async function fetchDriveConnection(teacherUid) {
+  if (!teacherUid) return null;
+  try {
+    const d = await db.collection("driveConnections").doc(teacherUid).get();
+    return d.exists ? d.data() : null;
+  } catch (e) { return null; }
+}
+
+async function connectDrive() {
+  const errEl = $("drive-err");
+  if (DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI") {
+    if (errEl) showErr(errEl, "La conexión con Drive aún no está configurada (falta el ID de cliente de Google).");
+    return;
+  }
+  try {
+    await loadGsiScript();
+    await loadFunctionsScript();
+    if (!driveCodeClient) {
+      driveCodeClient = google.accounts.oauth2.initCodeClient({
+        client_id: DRIVE_CLIENT_ID,
+        scope: DRIVE_SCOPE,
+        ux_mode: "popup",
+        redirect_uri: "postmessage",
+        prompt: "consent",
+        callback: async (resp) => {
+          if (resp && resp.code) {
+            try {
+              const fn = firebase.functions().httpsCallable("exchangeDriveCode");
+              const r = await fn({ code: resp.code });
+              driveConn = { email: r.data.email, connectedAt: new Date() };
+              renderStudents();
+            } catch (e) {
+              if (errEl) showErr(errEl, "No se pudo conectar tu Drive: " + (e.message || e));
+            }
+          } else if (errEl) {
+            showErr(errEl, "No se completó la conexión con Google. Intenta de nuevo.");
+          }
+        }
+      });
+    }
+    driveCodeClient.requestCode();
+  } catch (e) {
+    if (errEl) showErr(errEl, "No se pudo conectar: " + (e.message || e));
+  }
+}
+
+async function disconnectDrive() {
+  const errEl = $("drive-err");
+  try {
+    await loadFunctionsScript();
+    const fn = firebase.functions().httpsCallable("disconnectDrive");
+    await fn({});
+    driveConn = null;
+    renderStudents();
+  } catch (e) {
+    if (errEl) showErr(errEl, "No se pudo desconectar: " + (e.message || e));
+  }
 }
 
 async function showCourseWork(courseId) {
@@ -723,6 +810,7 @@ async function renderStudents() {
   }
   const course = courses[selCourse] || {};
   const teacherObj = isAdmin ? teachers.find(t => t.uid === selTeacher) : me;
+  driveConn = await fetchDriveConnection(selTeacher);
   // Enlace de Classroom del curso seleccionado: primero el propio del maestro, si no el del curso.
   const classroomLink = ((teacherObj && teacherObj.classroomLinks) || {})[selCourse] || course.classroomUrl || "";
   const students = selCourse ? await fetchStudents(selCourse, selTeacher) : [];
@@ -755,6 +843,12 @@ async function renderStudents() {
       <tr id="docs-row-${st.id}" class="hidden"><td colspan="${isAdmin ? 8 : 7}"><div id="docs-box-${st.id}"></div></td></tr>
       ${isAdmin ? `<tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>` : ""}`).join("") || `<tr><td colspan="${isAdmin ? 8 : 7}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
+  </div>
+  <div class="card"><h2>Respaldo en Drive</h2>
+    <p class="hint">Cada documento (PDF) que subas tú o tus alumnos se guarda en el portal y, si conectas tu Google Drive, también se copia automáticamente a una carpeta "Gecatech – Respaldo" en tu Drive. Conectar es opcional: sin conexión, tus archivos siguen guardados y visibles aquí.</p>
+    ${DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI" ? `<p class="err">La conexión con Drive aún no está configurada (falta el ID de cliente de Google).</p>` : (driveConn ? `<p>Conectado como <b>${esc(driveConn.email || "tu cuenta de Google")}</b></p>` : `<p class="muted">No conectado — tus archivos se guardan en el portal; la copia en Drive está desactivada.</p>`)}
+    ${isAdmin ? `<p class="muted">Solo el maestro puede conectar su Drive. Estás viendo el estado de ${esc(teacherObj ? teacherObj.name : "")}.</p>` : (DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI" ? `` : (driveConn ? `<button id="btn-drive-disconnect" class="ghost">Desconectar mi Google Drive</button>` : `<button id="btn-drive-connect" class="gold">Conectar mi Google Drive</button>`))}
+    <div id="drive-err" class="err"></div>
   </div>
   ${selCourse ? `<div class="card"><h2>Avisos para este curso</h2>
     <p class="hint">Los alumnos de este curso ven estos avisos en su portal.</p>
@@ -794,6 +888,10 @@ async function renderStudents() {
   if (stSel) stSel.addEventListener("change", (e) => { selTeacher = e.target.value; editingStudentId = null; renderStudents(); });
   const btnClassroom = $("btn-classroom");
   if (btnClassroom) btnClassroom.addEventListener("click", () => window.open(classroomLink, "_blank"));
+  const btnDriveConnect = $("btn-drive-connect");
+  if (btnDriveConnect) btnDriveConnect.addEventListener("click", connectDrive);
+  const btnDriveDisconnect = $("btn-drive-disconnect");
+  if (btnDriveDisconnect) btnDriveDisconnect.addEventListener("click", disconnectDrive);
   const btnToggleCols = $("btn-toggle-cols");
   if (btnToggleCols) btnToggleCols.addEventListener("click", () => { showAllCols = !showAllCols; renderStudents(); });
   $("btn-export").addEventListener("click", async () => {
