@@ -138,6 +138,7 @@ let selCourse = "";
 let selTeacher = "";
 let showAllCols = false;
 let editingStudentId = null;
+let diplomasCatalog = []; // [{id, name}] catálogo de diplomados (se carga en renderStudents/renderCourses)
 
 function showErr(el, msg) { el.textContent = msg; }
 function showOk(el, msg) { el.textContent = msg; }
@@ -422,20 +423,31 @@ const DEFAULT_COURSES = [
 ];
 async function renderCourses() {
   const s = $("section");
+  const diplomas = await fetchDiplomas();
   let rows = Object.entries(courses).map(([id, c]) => `
     <tr><td>${esc(c.name)}</td><td>${esc(c.schedule || "")}</td>
     <td><input type="date" value="${esc(c.startDate || "")}" data-course="${id}" data-field="startDate" style="max-width:170px"></td>
     <td><input type="number" min="6" max="24" value="${c.durationMonths || 12}" data-course="${id}" data-field="durationMonths" style="max-width:80px"> meses</td>
     <td><input type="url" value="${esc(c.classroomUrl || "")}" data-course="${id}" data-field="classroomUrl" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></td>
     <td><button class="small ghost" data-rec-course="${id}">Grabaciones (${(c.recordings || []).length})</button></td>
+    <td><label style="font-weight:normal"><input type="checkbox" data-course="${id}" data-field="showDiplomas" ${c.showDiplomas ? "checked" : ""} style="width:auto"> Mostrar a los alumnos</label></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
   <div class="card"><h2>Cursos</h2>
     <p class="hint">La duración y la fecha de inicio se usan para calcular la generación de cada alumno. Cambia los datos y toca Guardar.</p>
     ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div>` : `
-    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th></th></tr>${rows}</table>
+    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Diplomados visibles</th><th></th></tr>${rows}</table>
     <div id="rec-editor"></div>
     <div id="course-msg" class="okmsg"></div>`}
+  </div>
+  <div class="card"><h2>Diplomados</h2>
+    <p class="hint">Estos diplomados se pueden asignar a cada alumno en su ficha. El alumno solo los ve en su portal cuando activas "Mostrar a los alumnos" en su curso.</p>
+    ${diplomas.map(dp => `<div class="docline"><span>${esc(dp.name)}</span><button class="small ghost" data-del-diploma="${dp.id}" style="color:var(--err)">Eliminar</button></div>`).join("") || `<p class="muted">Aún no hay diplomados registrados.</p>`}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <input id="diploma-name" placeholder="Nombre del diplomado" style="flex:2;min-width:220px">
+      <button class="gold" id="btn-add-diploma">Agregar diplomado</button>
+    </div>
+    <div id="diploma-msg" class="okmsg"></div><div id="diploma-err" class="err"></div>
   </div>`;
   const seed = $("btn-seed");
   if (seed) seed.addEventListener("click", async () => {
@@ -451,9 +463,31 @@ async function renderCourses() {
     const startDate = s.querySelector(`[data-course="${id}"][data-field="startDate"]`).value;
     const durationMonths = parseInt(s.querySelector(`[data-course="${id}"][data-field="durationMonths"]`).value, 10) || 12;
     const classroomUrl = (s.querySelector(`[data-course="${id}"][data-field="classroomUrl"]`).value || "").trim();
-    await db.collection("courses").doc(id).update({ startDate, durationMonths, classroomUrl });
-    courses[id].startDate = startDate; courses[id].durationMonths = durationMonths; courses[id].classroomUrl = classroomUrl;
+    const showDiplomas = s.querySelector(`[data-course="${id}"][data-field="showDiplomas"]`).checked;
+    await db.collection("courses").doc(id).update({ startDate, durationMonths, classroomUrl, showDiplomas });
+    courses[id].startDate = startDate; courses[id].durationMonths = durationMonths; courses[id].classroomUrl = classroomUrl; courses[id].showDiplomas = showDiplomas;
     showOk($("course-msg"), "Guardado: " + courses[id].name);
+  }));
+  // Catálogo de diplomados: agregar y eliminar (solo admin).
+  const btnAddDiploma = $("btn-add-diploma");
+  if (btnAddDiploma) btnAddDiploma.addEventListener("click", async () => {
+    const name = ($("diploma-name").value || "").trim();
+    showErr($("diploma-err"), ""); showOk($("diploma-msg"), "");
+    if (!name) { showErr($("diploma-err"), "Escribe el nombre del diplomado."); return; }
+    btnAddDiploma.disabled = true;
+    try {
+      await db.collection("diplomas").add({ name, createdAt: Date.now() });
+      await renderCourses();
+      showOk($("diploma-msg"), "Diplomado agregado.");
+    } catch (e) { showErr($("diploma-err"), "No se pudo agregar: " + (e.message || e)); }
+    finally { btnAddDiploma.disabled = false; }
+  });
+  s.querySelectorAll("[data-del-diploma]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("¿Eliminar este diplomado del catálogo? Los alumnos que lo tenían asignado dejarán de verlo.")) return;
+    try {
+      await db.collection("diplomas").doc(b.getAttribute("data-del-diploma")).delete();
+      renderCourses();
+    } catch (e) { showErr($("diploma-err"), "No se pudo eliminar: " + (e.message || e)); }
   }));
   s.querySelectorAll("[data-rec-course]").forEach(b => b.addEventListener("click", () => {
     renderRecEditor(b.getAttribute("data-rec-course"));
@@ -647,6 +681,35 @@ async function fetchStudents(courseId, teacherId) {
   out.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   return out;
 }
+// ---------- Avisos del maestro ----------
+// createdAt puede ser Timestamp de servidor, número o null: normalizar a ms.
+function tsMillis(v) {
+  if (!v) return 0;
+  if (typeof v.toMillis === "function") return v.toMillis();
+  if (typeof v === "number") return v;
+  const d = new Date(v);
+  return isNaN(d) ? 0 : d.getTime();
+}
+function fmtAvDate(v) {
+  const ms = tsMillis(v);
+  if (!ms) return "";
+  return new Date(ms).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
+}
+async function fetchAnnouncements(courseId) {
+  // Sin orderBy en la consulta (evita necesitar un índice compuesto en
+  // Firestore): se ordena en el cliente por fecha descendente.
+  const snap = await db.collection("announcements").where("courseId", "==", courseId).limit(20).get();
+  const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+  out.sort((a, b) => tsMillis(b.createdAt) - tsMillis(a.createdAt));
+  return out;
+}
+// ---------- Diplomados ----------
+async function fetchDiplomas() {
+  const snap = await db.collection("diplomas").get();
+  const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+  out.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
+  return out;
+}
 async function renderStudents() {
   const s = $("section");
   const isAdmin = me.role === "admin";
@@ -664,6 +727,9 @@ async function renderStudents() {
   // Enlace de Classroom del curso seleccionado: primero el propio del maestro, si no el del curso.
   const classroomLink = ((teacherObj && teacherObj.classroomLinks) || {})[selCourse] || course.classroomUrl || "";
   const students = selCourse ? await fetchStudents(selCourse, selTeacher) : [];
+  const announcements = selCourse ? await fetchAnnouncements(selCourse) : [];
+  diplomasCatalog = await fetchDiplomas();
+  const editingSt = editingStudentId ? students.find(x => x.id === editingStudentId) : null;
   const courseOptions = myCourseIds.map(id => `<option value="${id}" ${id === selCourse ? "selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const teacherOptions = isAdmin ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
   s.innerHTML = `
@@ -691,6 +757,18 @@ async function renderStudents() {
       ${isAdmin ? `<tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>` : ""}`).join("") || `<tr><td colspan="${isAdmin ? 8 : 7}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
   </div>
+  ${selCourse ? `<div class="card"><h2>Avisos para este curso</h2>
+    <p class="hint">Los alumnos de este curso ven estos avisos en su portal.</p>
+    ${announcements.map(a => `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span><br>${esc(a.text || "")}</div>${(isAdmin || a.teacherId === me.uid) ? `<button class="small ghost" data-del-av="${a.id}" style="color:var(--err)">Eliminar</button>` : ""}</div>`).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
+    <div class="row" style="margin-top:12px">
+      <div><label>Título</label><input id="av-title" placeholder="Ej. Cambio de horario"></div>
+    </div>
+    <div class="row">
+      <div><label>Mensaje</label><textarea id="av-text" rows="3" placeholder="Escribe el aviso para tus alumnos…"></textarea></div>
+    </div>
+    <div style="margin-top:10px"><button id="btn-publish-av" class="gold">Publicar aviso</button></div>
+    <div id="av-msg" class="okmsg"></div><div id="av-err" class="err"></div>
+  </div>` : ""}
   <div class="card"><h2>${editingStudentId ? "Editar alumno" : "Dar de alta a un alumno"}</h2>
     <div class="row">
       <div><label>Apellido y Nombre</label><input id="st-name" placeholder="Ej. Juan Pérez López"></div>
@@ -700,6 +778,12 @@ async function renderStudents() {
     <div class="row">
       <div><label>Fecha de inicio de clases</label><input id="st-start" type="date"></div>
       <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" placeholder="Se calcula sola"></div>
+    </div>
+    <div style="margin-top:12px"><h3>Diplomados</h3>
+    ${diplomasCatalog.length ? diplomasCatalog.map(dp => {
+      const cur = (editingSt && editingSt.diplomas && editingSt.diplomas[dp.id]) || "pendiente";
+      return `<div class="row"><div><label>${esc(dp.name)}</label><select id="diploma-sel-${dp.id}"><option value="pendiente"${cur === "pendiente" ? " selected" : ""}>Pendiente</option><option value="en_curso"${cur === "en_curso" ? " selected" : ""}>En curso</option><option value="completado"${cur === "completado" ? " selected" : ""}>Completado</option></select></div></div>`;
+    }).join("") : `<p class="muted">Aún no hay diplomados registrados. Agrégalos en la pestaña Cursos.</p>`}
     </div>
     <div style="margin-top:14px"><button id="btn-save-student" class="gold">${editingStudentId ? "Guardar cambios" : "Dar de alta"}</button>
     ${editingStudentId ? `<button id="btn-cancel-edit" class="ghost">Cancelar</button>` : ""}</div>
@@ -727,11 +811,34 @@ async function renderStudents() {
       showOk($("exp-msg"), "Plantilla en blanco descargada.");
     } catch (e) { showErr($("exp-err"), "No se pudo descargar: " + (e.message || e)); }
   });
+  // Avisos para este curso: publicar y eliminar.
+  const btnPublishAv = $("btn-publish-av");
+  if (btnPublishAv) btnPublishAv.addEventListener("click", async () => {
+    const title = $("av-title").value.trim();
+    const text = $("av-text").value.trim();
+    showErr($("av-err"), ""); showOk($("av-msg"), "");
+    if (!title || !text) { showErr($("av-err"), "Escribe el título y el mensaje del aviso."); return; }
+    if (!teacherObj) { showErr($("av-err"), "Elige un maestro primero."); return; }
+    btnPublishAv.disabled = true;
+    try {
+      await db.collection("announcements").add({ courseId: selCourse, teacherId: teacherObj.uid, teacherName: teacherObj.name, title, text, createdAt: firebase.firestore.FieldValue.serverTimestamp(), active: true });
+      await renderStudents();
+      showOk($("av-msg"), "Aviso publicado.");
+    } catch (e) { showErr($("av-err"), "No se pudo publicar: " + (e.message || e)); }
+    finally { btnPublishAv.disabled = false; }
+  });
+  s.querySelectorAll("[data-del-av]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("¿Eliminar este aviso? Los alumnos dejarán de verlo.")) return;
+    try {
+      await db.collection("announcements").doc(b.getAttribute("data-del-av")).delete();
+      renderStudents();
+    } catch (e) { showErr($("exp-err"), "No se pudo eliminar: " + (e.message || e)); }
+  }));
   s.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", async () => {
     const st = students.find(x => x.id === b.getAttribute("data-edit"));
     if (!st) return;
     editingStudentId = st.id;
-    renderStudents();
+    await renderStudents();
     $("st-name").value = st.name || "";
     $("st-curp").value = st.curp || "";
     $("st-phone").value = st.phone || "";
@@ -818,7 +925,12 @@ async function renderStudents() {
     if (!selCourse || !selTeacher) { showErr($("st-err"), "Elige curso y maestro primero."); return; }
     $("btn-save-student").disabled = true;
     try {
-      const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation: generation || "", active: true };
+      const diplomasMap = {};
+      diplomasCatalog.forEach(dp => {
+        const sel = $("diploma-sel-" + dp.id);
+        if (sel && sel.value) diplomasMap[dp.id] = sel.value;
+      });
+      const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation: generation || "", active: true, diplomas: diplomasMap };
       if (editingStudentId) {
         await db.collection("students").doc(editingStudentId).update(data);
         showOk($("st-msg"), "Alumno actualizado.");
