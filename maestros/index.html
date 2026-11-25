@@ -606,6 +606,35 @@ function crPhotoHtml(profile, name) {
   if (url) return `<img src="${esc(url)}" alt="" style="width:22px;height:22px;border-radius:50%;vertical-align:-6px;object-fit:cover">`;
   return `<span style="display:inline-block;width:22px;height:22px;border-radius:50%;background:#e8e2d9;color:#555;text-align:center;line-height:22px;font-size:12px;vertical-align:-6px">${esc(initial)}</span>`;
 }
+// Foto redonda de un maestro (o círculo con su inicial si no tiene foto).
+function teacherPhotoHtml(url, name, size) {
+  const px = size || 40;
+  const initial = ((name || "?").trim().charAt(0) || "?").toUpperCase();
+  if (url) return `<img src="${esc(url)}" alt="" style="width:${px}px;height:${px}px;border-radius:50%;object-fit:cover;vertical-align:middle">`;
+  return `<span style="display:inline-block;width:${px}px;height:${px}px;border-radius:50%;background:#e8e2d9;color:#555;text-align:center;line-height:${px}px;font-size:${Math.round(px * 0.45)}px;vertical-align:middle">${esc(initial)}</span>`;
+}
+// Sube la foto de un maestro a Storage, la guarda en su ficha y la
+// propaga a las fichas de sus alumnos (para que se vea en el Portal
+// Alumnos). La ruta es fija por maestro, así que cambiar la foto
+// reemplaza el archivo anterior. Solo imágenes JPG, PNG o WebP de
+// máximo 5 MB.
+async function uploadTeacherPhoto(uid, file) {
+  if (!file) throw new Error("Elige una imagen primero.");
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type || "")) throw new Error("Solo se aceptan imágenes JPG, PNG o WebP.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("La imagen es muy grande: máximo 5 MB.");
+  const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const path = "teacher-photos/" + uid + "/foto." + ext;
+  await storage.ref(path).put(file);
+  const url = await storage.ref(path).getDownloadURL();
+  await db.collection("teachers").doc(uid).update({ photoUrl: url });
+  const snap = await db.collection("students").where("teacherId", "==", uid).get();
+  if (!snap.empty) {
+    const batch = db.batch();
+    snap.forEach(d => batch.update(d.ref, { teacherPhotoUrl: url }));
+    await batch.commit();
+  }
+  return url;
+}
 function crPerson(c, uid) {
   if (c) {
     if (c.roster && c.roster[uid]) return c.roster[uid];
@@ -1551,8 +1580,8 @@ async function renderTeachers() {
     <div id="nt-msg" class="okmsg"></div><div id="nt-err" class="err"></div>
   </div>
   <div class="card"><h2>Maestros registrados</h2>
-    <table><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th>Contraseña</th><th></th></tr>
-    ${list.map(t => `<tr><td>${esc(t.name)}</td><td>${esc(t.email)}</td>
+    <table><tr><th>Foto</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th>Contraseña</th><th></th></tr>
+    ${list.map(t => `<tr><td id="teacher-photo-${t.uid}">${teacherPhotoHtml(t.photoUrl, t.name, 40)}</td><td>${esc(t.name)}</td><td>${esc(t.email)}</td>
       <td><span class="badge ${t.role === "admin" ? "admin" : "teacher"}">${t.role === "admin" ? "Admin" : "Maestro/a"}</span></td>
       <td>${(t.courses || []).map(id => esc(courses[id] ? courses[id].name : id)).join(", ")}</td>
       <td>${(t.courses || []).map(id => `<div style="margin-bottom:6px"><small>${esc(courses[id] ? courses[id].name : id)}</small><br><input type="url" data-teacher="${t.uid}" data-course="${id}" data-field="classroomLink" value="${esc((t.classroomLinks || {})[id] || "")}" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></div>`).join("")}</td>
@@ -1672,9 +1701,34 @@ async function openTeacherEdit(uid) {
     <div>${Object.entries(courses).map(([id, c]) => `<label style="display:inline-block;margin:4px 12px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="edit-teacher-course" value="${id}" ${(t.courses || []).includes(id) ? "checked" : ""} style="width:auto"> ${esc(c.name)}</label>`).join("")}</div>
     <label><input type="checkbox" id="et-active" ${t.active !== false ? "checked" : ""} ${isSelf ? "disabled" : ""} style="width:auto"> Activo</label>
     ${isSelf ? `<p class="hint">No puedes desactivar tu propia cuenta.</p>` : ""}
+    <div style="margin-top:14px"><label>Foto</label>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:6px"><span id="et-photo-preview">${teacherPhotoHtml(t.photoUrl, t.name, 64)}</span>
+      <span><input type="file" id="et-photo" accept="image/*" style="width:auto"> <button id="btn-upload-photo" class="small gold">Subir foto</button></span></div>
+      <p class="hint">La foto se ve en esta lista, en la cuenta del maestro y en el Portal Alumnos junto a su nombre. Si no tiene foto, se ven sus iniciales.</p>
+      <div id="et-photo-msg" class="okmsg"></div><div id="et-photo-err" class="err"></div>
+    </div>
     <div style="margin-top:14px"><button id="btn-save-teacher" class="gold">Guardar cambios</button> <button id="btn-cancel-teacher" class="ghost">Cancelar</button></div>
     <div id="et-msg" class="okmsg"></div><div id="et-err" class="err"></div>
   </div>`;
+  // Cambiar la foto de este maestro: se guarda en su ficha y se propaga
+  // a las fichas de sus alumnos. La vista previa y la tabla se actualizan
+  // en su lugar, sin recargar, para no borrar el mensaje de confirmación.
+  $("btn-upload-photo").addEventListener("click", async () => {
+    const file = $("et-photo").files[0];
+    showErr($("et-photo-err"), ""); showOk($("et-photo-msg"), "");
+    $("btn-upload-photo").disabled = true;
+    try {
+      const url = await uploadTeacherPhoto(uid, file);
+      if (uid === me.uid) me.photoUrl = url;
+      const prev = $("et-photo-preview");
+      if (prev) prev.innerHTML = teacherPhotoHtml(url, t.name, 64);
+      const cell = $("teacher-photo-" + uid);
+      if (cell) cell.innerHTML = teacherPhotoHtml(url, t.name, 40);
+      showOk($("et-photo-msg"), "Foto actualizada.");
+    } catch (e) {
+      showErr($("et-photo-err"), "No se pudo subir: " + (e.message || e));
+    } finally { $("btn-upload-photo").disabled = false; }
+  });
   $("btn-cancel-teacher").addEventListener("click", () => { box.innerHTML = ""; });
   $("btn-save-teacher").addEventListener("click", async () => {
     const name = $("et-name").value.trim();
@@ -1707,6 +1761,12 @@ async function renderAccount() {
     <p class="muted">Último cambio de contraseña: ${fmtPassDate(me.passwordChangedAt)}.</p>
     ${must ? `<p class="err" style="font-weight:600">Tu contraseña fue restablecida por el administrador. Cámbiala ahora por una contraseña tuya.</p>` : ""}
   </div>
+  <div class="card"><h2>Mi foto</h2>
+    <div style="display:flex;align-items:center;gap:14px"><span id="my-photo-preview">${teacherPhotoHtml(me.photoUrl, me.name, 96)}</span>
+    <span><input type="file" id="photo-file" accept="image/*" style="width:auto"> <button id="btn-change-photo" class="gold">Cambiar mi foto</button>
+    <p class="hint">Tu foto se ve en el Portal Alumnos junto a tu nombre. Si aún no tienes foto, tus alumnos ven tus iniciales.</p></span></div>
+    <div id="photo-msg" class="okmsg"></div><div id="photo-err" class="err"></div>
+  </div>
   <div class="card"><h2>Cambiar mi contraseña</h2>
     <p class="hint">Tu contraseña solo la sabes tú: el administrador no puede verla, solo puede restablecerla si la olvidas.</p>
     <div class="row">
@@ -1717,6 +1777,23 @@ async function renderAccount() {
     <div style="margin-top:14px"><button id="btn-change-pass" class="gold">Cambiar contraseña</button></div>
     <div id="pw-msg" class="okmsg"></div><div id="pw-err" class="err"></div>
   </div>`;
+  // Cambiar mi foto: se guarda en mi ficha y se propaga a las fichas de
+  // mis alumnos. La vista previa se actualiza en su lugar, sin recargar,
+  // para no borrar el mensaje de confirmación.
+  $("btn-change-photo").addEventListener("click", async () => {
+    const file = $("photo-file").files[0];
+    showErr($("photo-err"), ""); showOk($("photo-msg"), "");
+    $("btn-change-photo").disabled = true;
+    try {
+      const url = await uploadTeacherPhoto(me.uid, file);
+      me.photoUrl = url;
+      const prev = $("my-photo-preview");
+      if (prev) prev.innerHTML = teacherPhotoHtml(url, me.name, 96);
+      showOk($("photo-msg"), "Foto actualizada.");
+    } catch (e) {
+      showErr($("photo-err"), "No se pudo subir: " + (e.message || e));
+    } finally { $("btn-change-photo").disabled = false; }
+  });
   $("btn-change-pass").addEventListener("click", async () => {
     const cur = $("pw-cur").value;
     const nw = $("pw-new").value;
@@ -2020,6 +2097,9 @@ async function renderStudents() {
           const courseId = stDoc.exists ? (stDoc.data().courseId || "") : "";
           const links = tDoc.exists ? (tDoc.data().classroomLinks || {}) : {};
           if (courseId && links[courseId]) update.teacherClassroomUrl = links[courseId];
+          // Foto de ese maestro, para que el alumno la vea en su curso.
+          const photoUrl = tDoc.exists ? (tDoc.data().photoUrl || "").trim() : "";
+          if (photoUrl) update.teacherPhotoUrl = photoUrl;
         }
       } catch (lookupErr) {
         teacherNote = " (No se pudo guardar el maestro en su ficha, pero la cuenta sí quedó creada.)";
