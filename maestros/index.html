@@ -154,7 +154,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let me = null;          // {uid, name, email, role, courses[], active}
-let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}]}
+let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número (índice global de la clase actual del curso)}
 let currentTab = "alumnos";
 let selCourse = "";
 let selTeacher = "";
@@ -165,13 +165,6 @@ let diplomasCatalog = []; // [{id, name}] catálogo de diplomados (se carga en r
 function showErr(el, msg) { el.textContent = msg; }
 function showOk(el, msg) { el.textContent = msg; }
 
-function calcGeneration(startDate, durationMonths) {
-  if (!startDate) return "";
-  const d = new Date(startDate + "T00:00:00");
-  if (isNaN(d)) return "";
-  d.setMonth(d.getMonth() + (durationMonths || 12));
-  return d.getFullYear();
-}
 function monthRange(startDate) {
   // Grupos de mes desde el mes de inicio del curso hasta el mes actual (máx. 24).
   const now = new Date();
@@ -998,6 +991,8 @@ async function showCourseWork(courseId) {
     crRenderAnnouncements(courseId);
     crRenderMaterials(courseId);
     // Tareas, agrupadas por tema cuando se pudieron cargar los temas.
+    // Si la lista de temas llegó vacía o incompleta, las tareas con tema
+    // desconocido van a "Sin tema": ninguna tarea desaparece de la vista.
     const tasksBox = $("cr-tasks-" + courseId);
     if (tasksBox) {
       if (!works.length) {
@@ -1005,8 +1000,9 @@ async function showCourseWork(courseId) {
       } else {
         const groups = [];
         if (topics) {
+          const knownIds = new Set(topics.map(t => t.topicId));
           topics.forEach(t => groups.push({ title: t.name, items: works.filter(w => w.topicId === t.topicId) }));
-          const noTopic = works.filter(w => !w.topicId);
+          const noTopic = works.filter(w => !w.topicId || !knownIds.has(w.topicId));
           if (noTopic.length) groups.push({ title: "Sin tema", items: noTopic });
         } else {
           groups.push({ title: "", items: works });
@@ -1131,6 +1127,114 @@ const DEFAULT_COURSES = [
   { id: "psicologia", name: "Psicología Educativa", schedule: "Varios horarios", teacher: "Varias maestras", startDate: "", durationMonths: 12 },
   { id: "especial", name: "Educación Especial", schedule: "Lunes 5-7 p.m.", teacher: "Denny Román", startDate: "", durationMonths: 12 }
 ];
+// Temario por defecto (de la planeación de cada curso). Se guarda en
+// courses/{id}.syllabus como [{title, topics: []}] y el maestro lo puede
+// corregir en la pestaña Cursos (botón Temario). Los otros 4 cursos
+// quedan con el temario vacío hasta que se les cargue el suyo.
+const DEFAULT_SYLLABUS = {
+  industrial: [
+    { title: "1.0 TÓPICOS DE MANUFACTURA", topics: ["1.1 Qué es Ingeniería Industrial", "1.2 Maestros de la Calidad", "1.3 Maestros de la Productividad", "1.4 Qué es Manufactura", "1.5 Qué es un Proceso de Manufactura", "1.6 Los 6 Sistemas de Manufactura", "1.7 Los 7 Flujos de Manufactura", "1.8 Los 7 Desperdicios de Producción", "1.9 Qué es el Método LIFO", "1.10 Qué es el Método FIFO"] },
+    { title: "2.0 ADMINISTRACIÓN DE LA CALIDAD", topics: ["2.1 Qué es Calidad", "2.2 Control de Calidad", "2.3 Inspección de Calidad", "2.4 Auditoría de Calidad", "2.5 Aseguramiento de la Calidad", "2.6 Gestión Total de la Calidad", "2.7 ISO", "2.8 ISO 9001", "2.9 ISO 13485", "2.10 BPM", "2.11 8D", "2.12 FDA", "2.13 5 Tipos de Inspección de Control de Calidad"] },
+    { title: "3.0 METODOLOGÍA LEAN MANUFACTURING–SIX SIGMA", topics: ["3.1 Lean Manufacturing", "3.2 Objetivo de Lean Manufacturing", "3.3 Herramientas Lean Manufacturing", "3.4 Pensamiento Lean", "3.5 PDCA", "3.6 Six Sigma", "3.7 DMAIC", "3.8 Herramientas de Control de Calidad", "3.9 Estructura de Certificación Six Sigma", "3.10 Ventajas de Lean Manufacturing–Six Sigma"] },
+    { title: "4.0 PROCESO E INTERPRETACIÓN DE DIBUJO TÉCNICO INDUSTRIAL", topics: ["4.1 Proceso e Interpretación de Dibujo Técnico Industrial", "4.2 Letra Técnica", "4.3 Dibujos de Cuerpos Geométricos", "4.4 Normas de Acotación", "4.5 Tipos de Acotación", "4.5 Dibujo Isométrico", "4.6 Márgenes y Cajetines", "4.7 Qué es un Layout", "4.8 Qué es AutoCAD"] },
+    { title: "5.0 CONTROL DE ESTADÍSTICA DE CALIDAD", topics: ["5.1 Herramientas Principales del SPC", "5.2 Gráficos de Control", "5.3 Histogramas", "5.4 Diagrama de Pareto", "5.5 Diagramas de Dispersión", "5.6 Pescado de Ishikawa", "5.7 Diagrama de Gantt", "5.8 Análisis de Capacidad del Proceso"] },
+    { title: "6.0 COSTOS Y PRESUPUESTOS", topics: ["6.1 Qué es Costo y Presupuesto", "6.2 Precio Unitario", "6.3 Materia Prima", "6.4 Costo Directo–Indirecto", "6.5 Precio de Venta", "6.6 Costo Fijo", "6.7 Merma", "6.8 Costo Variable", "6.9 Costo Primo", "6.10 Costos de Administración", "6.11 Costos Financieros", "6.12 Costos de Distribución"] },
+    { title: "7.0 MÉTODOS DE SISTEMA DE TRABAJO", topics: ["7.1 Qué es un Sistema de Producción", "7.2 Cuello de Botella", "7.3 Calcular Horas Hombre vs Horas Máquina", "7.4 Qué es Productividad", "7.5 Takt Time", "7.6 Cycle Time", "7.7 Lead Time", "7.8 6 Etapas para un Balanceo de Línea", "7.9 Ejercicio Final de Balanceo de Línea"] },
+    { title: "8.0 TPM", topics: ["8.1 TPM", "8.2 8 Pilares del TPM", "8.3 OEE", "8.4 5 Objetivos del TPM", "8.5 Ventajas del TPM", "8.6 Familia de Partes", "8.7 Sistemas de Codificación"] },
+    { title: "9.0 SEGURIDAD E HIGIENE INDUSTRIAL", topics: ["9.1 Historia de Seguridad e Higiene", "9.2 Pirámide de Frank Bird", "9.3 Control de Riesgos", "9.4 Accidentes de Trabajo", "9.5 Ergonomía", "9.6 Las 9 Reglas Más Importantes de Calidad", "9.7 Servicios de Prevención", "9.8 Salud Laboral", "9.9 Las Normas Mexicanas Aplicadas a los Diferentes Tipos de Trabajo"] },
+    { title: "10.0 ÉTICA Y VALORES–TIPOS DE LIDERAZGO", topics: ["10.1 Qué es Ética", "10.2 Qué es Moral", "10.3 Qué son Normas Morales", "10.4 Qué son Valores", "10.5 Ética vs Moral", "10.6 Qué es Liderazgo", "10.7 Tipos de Liderazgo", "10.8 Características de Liderazgo"] },
+    { title: "11.0 LECTURA Y REDACCIÓN", topics: ["11.1 Funciones de Lenguaje", "11.2 Intención Comunicativa", "11.3 Lectura y Redacción", "11.4 Etapas de Proceso de Escritura", "11.5 Etapas de Proceso de Lectura", "11.6 Qué es un Informe", "11.6 Qué es una Exposición", "11.7 Qué es un Cuento", "11.8 Qué es una Leyenda", "11.9 Partes de un Libro", "11.10 Desarrollar (cuento, leyenda, información, etc.)"] },
+    { title: "12.0 INGLÉS TÉCNICO", topics: ["12.1 Abecedario en Inglés", "12.2 Pronombres Personales", "12.3 To Be, Do/Does, Have/Has", "12.4 Verbos", "12.5 Adjetivos Posesivos", "12.6 What, Why, Where, How", "12.7 Números", "12.8 Colores", "12.9 Profesiones, Animales, Cosas", "12.10 Cantar en Inglés"] }
+  ],
+  administrativo: [
+    { title: "Administración", topics: ["1.1 Definición de Administración", "1.2 Funciones de la Administración"] },
+    { title: "Liderazgo", topics: ["1.1 Definición de Liderazgo", "1.2 Cualidades de un Líder Efectivo", "1.3 El Liderazgo en el Contexto Administrativo"] },
+    { title: "Contabilidad Básica", topics: ["1. Definición de Contabilidad", "2. Cuentas de Balance", "3. Teoría de las Cuentas"] },
+    { title: "Negociación", topics: ["Sesión 1. Introducción a la negociación", "Sesión 2. Comunicación efectiva en la negociación", "Sesión 3. Estrategias de negociación", "Sesión 4. Tácticas de negociación", "Sesión 5. Negociación en situaciones difíciles", "Sesión 6. Aplicación práctica de habilidades de negociación"] },
+    { title: "Atención al Público", topics: ["Introducción a la Atención al Público", "Técnicas de Atención al Público", "Herramientas de Atención al Público"] },
+    { title: "Documentos Administrativos", topics: ["Introducción a la Documentación Administrativa", "Documentos Legales y Administrativos"] },
+    { title: "Comunicación Laboral", topics: ["Comunicación Interna", "Comunicación Externa", "Comunicación Efectiva"] },
+    { title: "Excel", topics: ["1.1 Interfaz de Excel", "1.2 Funciones Básicas", "2.1 Formatos de Celdas", "2.2 Insertar Filas y Columnas", "3.1 Funciones de Fecha y Hora", "4.1 Tipos de Gráficos", "4.2 Creación de Gráficos"] },
+    { title: "Legislación Laboral", topics: ["1. Legislación laboral y estructura empresarial", "2. Código federal", "3. Discriminación", "4. Derechos humanos", "5. Derechos universales", "6. Definición del acoso laboral"] },
+    { title: "Marketing y Ventas", topics: ["1. Introducción al marketing y ventas", "2. Importancia del mercado", "3. Las 4 ps del marketing", "4. Procesos de la venta", "5. Marketing digital: estrategias y herramientas"] },
+    { title: "Gestión de Proyectos", topics: ["1. Introducción a la administración de proyectos", "2. Planificación del proyecto"] },
+    { title: "Ética Profesional", topics: ["1. Introducción a la ética profesional", "2. Dilemas éticos en las prácticas", "3. Construyendo una cultura ética"] }
+  ]
+};
+
+// ---------- Temario y progreso ----------
+// El temario de un curso es [{title, topics: []}]. La "clase actual" (del
+// curso o de un alumno) es el ÍNDICE GLOBAL de la clase dentro del temario
+// aplanado (0 = primera clase del primer módulo): así no importa si dos
+// temas tienen el mismo número (en la planeación de Industrial el 4.5 y
+// el 11.6 se repiten) ni si el maestro edita los textos después.
+function flattenSyllabus(syllabus) {
+  const out = [];
+  (Array.isArray(syllabus) ? syllabus : []).forEach(m => {
+    (Array.isArray(m.topics) ? m.topics : []).forEach(t => out.push({ index: out.length, module: m.title || "", topic: t }));
+  });
+  return out;
+}
+function syllabusToText(syllabus) {
+  // Un módulo por línea "# Título" y un tema por línea debajo.
+  return (Array.isArray(syllabus) ? syllabus : []).map(m => "# " + (m.title || "") + "\n" + (Array.isArray(m.topics) ? m.topics : []).join("\n")).join("\n");
+}
+function textToSyllabus(text) {
+  const modules = [];
+  let cur = null;
+  (text || "").split("\n").forEach(line => {
+    const l = line.trim();
+    if (!l) return;
+    if (l.startsWith("#")) {
+      cur = { title: l.replace(/^#+\s*/, ""), topics: [] };
+      modules.push(cur);
+    } else {
+      if (!cur) { cur = { title: "Temario", topics: [] }; modules.push(cur); }
+      cur.topics.push(l);
+    }
+  });
+  return modules.filter(m => m.topics.length || m.title);
+}
+function classOptionsHtml(flat, selectedIdx) {
+  // Opciones agrupadas por módulo (<optgroup>); value = índice global.
+  let html = "";
+  let curModule = null;
+  flat.forEach(item => {
+    if (item.module !== curModule) {
+      if (curModule !== null) html += "</optgroup>";
+      html += `<optgroup label="${esc(item.module || "Temario")}">`;
+      curModule = item.module;
+    }
+    html += `<option value="${item.index}"${item.index === selectedIdx ? " selected" : ""}>${esc(item.topic)}</option>`;
+  });
+  if (curModule !== null) html += "</optgroup>";
+  return html;
+}
+function progressSummary(flat, idx) {
+  // {current, before, after} o null si no hay clase asignada.
+  if (!flat.length || typeof idx !== "number" || idx < 0 || idx >= flat.length) return null;
+  return { current: flat[idx], before: flat.slice(0, idx), after: flat.slice(idx + 1) };
+}
+function progressStudentHtml(flat, idx) {
+  const p = progressSummary(flat, idx);
+  if (!p) return `<span class="muted">Sin clase asignada</span>`;
+  const n = p.after.length;
+  return `<strong>Va en:</strong> ${esc(p.current.module)} — ${esc(p.current.topic)}<br><span class="muted">Le faltan: ${n} clase${n === 1 ? "" : "s"}</span>` +
+    (n ? `<details><summary>Ver las que faltan</summary>${p.after.map(r => esc(r.topic)).join("<br>")}</details>` : `<br><span class="muted">Temario completo.</span>`);
+}
+function progressCourseHtml(flat, idx) {
+  const p = progressSummary(flat, idx);
+  if (!p) return `<p class="muted">Clase actual sin definir: elige en qué clase va el curso.</p>`;
+  const b = p.before.length, a = p.after.length;
+  return `<p><strong>Ya diste:</strong> ${b} clase${b === 1 ? "" : "s"}${b ? ` <details><summary>Ver las que ya diste</summary>${p.before.map(r => esc(r.module + " — " + r.topic)).join("<br>")}</details>` : ""}</p>
+  <p><strong>En curso:</strong> ${esc(p.current.module)} — ${esc(p.current.topic)}</p>
+  <p><strong>Faltan por dar:</strong> ${a} clase${a === 1 ? "" : "s"}${a ? ` <details><summary>Ver las que faltan</summary>${p.after.map(r => esc(r.module + " — " + r.topic)).join("<br>")}</details>` : " — temario completo."}</p>`;
+}
+function studentProgressCell(st, flat) {
+  const cur = (typeof st.currentClass === "number") ? st.currentClass : null;
+  return `<select data-prog-student="${st.id}" style="max-width:220px"><option value="">Sin asignar</option>${classOptionsHtml(flat, cur)}</select>` +
+    `<div id="prog-text-${st.id}" style="margin-top:6px">${progressStudentHtml(flat, st.currentClass)}</div>`;
+}
 async function renderCourses() {
   const s = $("section");
   const diplomas = await fetchDiplomas();
@@ -1140,14 +1244,16 @@ async function renderCourses() {
     <td><input type="number" min="6" max="24" value="${c.durationMonths || 12}" data-course="${id}" data-field="durationMonths" style="max-width:80px"> meses</td>
     <td><input type="url" value="${esc(c.classroomUrl || "")}" data-course="${id}" data-field="classroomUrl" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></td>
     <td><button class="small ghost" data-rec-course="${id}">Grabaciones (${(c.recordings || []).length})</button></td>
+    <td><button class="small ghost" data-syl-course="${id}">Temario (${flattenSyllabus(c.syllabus || []).length})</button></td>
     <td><label style="font-weight:normal"><input type="checkbox" data-course="${id}" data-field="showDiplomas" ${c.showDiplomas ? "checked" : ""} style="width:auto"> Mostrar a los alumnos</label></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
   <div class="card"><h2>Cursos</h2>
-    <p class="hint">La duración y la fecha de inicio se usan para calcular la generación de cada alumno. Cambia los datos y toca Guardar.</p>
+    <p class="hint">La generación de cada alumno la elige el maestro al darlo de alta: la fecha de inicio y la duración del curso ya no la determinan. Cambia los datos y toca Guardar.</p>
     ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div><div id="seed-err" class="err"></div>` : `
-    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Diplomados visibles</th><th></th></tr>${rows}</table>
+    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Temario</th><th>Diplomados visibles</th><th></th></tr>${rows}</table>
     <div id="rec-editor"></div>
+    <div id="syl-editor"></div>
     <div id="course-msg" class="okmsg"></div>`}
   </div>
   <div class="card"><h2>Diplomados</h2>
@@ -1163,7 +1269,7 @@ async function renderCourses() {
   if (seed) seed.addEventListener("click", async () => {
     try {
       for (const c of DEFAULT_COURSES) {
-        await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "" });
+        await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "", syllabus: DEFAULT_SYLLABUS[c.id] || [] });
       }
       await loadCourses();
       showOk($("seed-msg"), "Cursos cargados.");
@@ -1205,6 +1311,9 @@ async function renderCourses() {
   }));
   s.querySelectorAll("[data-rec-course]").forEach(b => b.addEventListener("click", () => {
     renderRecEditor(b.getAttribute("data-rec-course"));
+  }));
+  s.querySelectorAll("[data-syl-course]").forEach(b => b.addEventListener("click", () => {
+    renderSylEditor(b.getAttribute("data-syl-course"));
   }));
 }
 
@@ -1251,6 +1360,69 @@ function renderRecEditor(courseId) {
     renderRecEditor(courseId);
     showOk($("rec-msg"), "Grabación quitada.");
   }));
+}
+
+// ---------- Temario por curso (se guarda en courses/{id}.syllabus) ----------
+// La clase actual del curso (lo que el maestro está dando) se guarda en
+// courses/{id}.currentClass: la elige el maestro a mano, sin cálculo por
+// fecha; es independiente de la clase actual de cada alumno.
+function renderSylEditor(courseId) {
+  const box = $("syl-editor");
+  if (!box) return;
+  const c = courses[courseId];
+  if (!c) { box.innerHTML = ""; return; }
+  const hasSyl = Array.isArray(c.syllabus) && c.syllabus.length > 0;
+  const def = DEFAULT_SYLLABUS[courseId];
+  const initialText = syllabusToText(hasSyl ? c.syllabus : (def || []));
+  const flat = flattenSyllabus(c.syllabus || []);
+  const curIdx = (typeof c.currentClass === "number") ? c.currentClass : null;
+  box.innerHTML = `
+  <div class="card" style="margin-top:12px"><h3>Temario — ${esc(c.name)}</h3>
+    <p class="hint">Un tema por línea. Las líneas que empiezan con # son el nombre del módulo o materia. ${def && !hasSyl ? "Abajo viene el temario de la planeación: revísalo y toca Guardar temario." : "El maestro elige en qué clase va cada alumno y el portal muestra las que le faltan."}</p>
+    <div class="row"><div><label>Clase actual del curso (la que estás dando)</label>
+      <select id="syl-current" ${flat.length ? "" : "disabled"}>
+        <option value="">Sin definir</option>
+        ${classOptionsHtml(flat, curIdx)}
+      </select></div></div>
+    <div id="syl-course-progress" style="margin-top:8px">${progressCourseHtml(flat, curIdx)}</div>
+    <div style="margin-top:12px"><label>Temario (un tema por línea; # = módulo o materia)</label>
+    <textarea id="syl-text" rows="14" style="width:100%">${esc(initialText)}</textarea></div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="gold" id="syl-save">Guardar temario</button><button class="ghost" id="syl-close">Cerrar</button></div>
+    <div id="syl-msg" class="okmsg"></div><div id="syl-err" class="err"></div>
+  </div>`;
+  const sylSel = $("syl-current");
+  if (sylSel) sylSel.addEventListener("change", async () => {
+    const v = sylSel.value;
+    showErr($("syl-err"), ""); showOk($("syl-msg"), "");
+    try {
+      if (v === "") {
+        await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
+        delete courses[courseId].currentClass;
+        $("syl-course-progress").innerHTML = progressCourseHtml(flat, null);
+        showOk($("syl-msg"), "Clase actual del curso sin definir.");
+      } else {
+        const idx = parseInt(v, 10);
+        await db.collection("courses").doc(courseId).update({ currentClass: idx });
+        courses[courseId].currentClass = idx;
+        $("syl-course-progress").innerHTML = progressCourseHtml(flat, idx);
+        showOk($("syl-msg"), "Clase actual del curso guardada.");
+      }
+    } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
+  });
+  $("syl-save").addEventListener("click", async () => {
+    const parsed = textToSyllabus($("syl-text").value);
+    showErr($("syl-err"), ""); showOk($("syl-msg"), "");
+    try {
+      await db.collection("courses").doc(courseId).update({ syllabus: parsed });
+      courses[courseId].syllabus = parsed;
+      const n = flattenSyllabus(parsed).length;
+      const btn = document.querySelector(`[data-syl-course="${courseId}"]`);
+      if (btn) btn.textContent = "Temario (" + n + ")";
+      renderSylEditor(courseId);
+      showOk($("syl-msg"), "Temario guardado: " + n + " clases.");
+    } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
+  });
+  $("syl-close").addEventListener("click", () => { box.innerHTML = ""; });
 }
 
 // ---------- Maestros (solo admin) ----------
@@ -1445,11 +1617,18 @@ async function renderStudents() {
   const announcements = selCourse ? await fetchAnnouncements(selCourse) : [];
   diplomasCatalog = await fetchDiplomas();
   const editingSt = editingStudentId ? students.find(x => x.id === editingStudentId) : null;
+  const flat = flattenSyllabus(course.syllabus || []);
+  const progColSpan = flat.length ? 9 : 8;
+  // Al editar: la clase actual del alumno; al dar de alta: la clase actual
+  // del curso (el maestro la cambia si el alumno va en otra).
+  const formClassIdx = editingSt
+    ? ((typeof editingSt.currentClass === "number") ? editingSt.currentClass : null)
+    : ((typeof course.currentClass === "number") ? course.currentClass : null);
   const courseOptions = myCourseIds.map(id => `<option value="${id}" ${id === selCourse ? "selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const teacherOptions = isAdmin ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
   s.innerHTML = `
   <div class="card"><h2>${isAdmin ? "Alumnos" : "Mis alumnos"}</h2>
-    <p class="hint">La generación se calcula con la fecha de inicio del alumno y la duración del curso. Puedes corregirla a mano si hace falta.</p>
+    <p class="hint">La generación la elige el maestro al dar de alta al alumno (año de graduación). La fecha de inicio y la duración del curso no la determinan.</p>
     <div class="row">
       <div><label>Curso</label><select id="sel-course">${courseOptions}</select></div>
       ${isAdmin ? `<div><label>Maestro/a</label><select id="sel-teacher">${teacherOptions}</select></div>` : ""}
@@ -1461,15 +1640,16 @@ async function renderStudents() {
       <button id="btn-toggle-cols" class="ghost">${showAllCols ? "Ver tabla compacta" : "Ver tabla completa"}</button>
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
-    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th><th>Acceso</th><th></th></tr>
+    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th>${flat.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th><th></th></tr>
     ${students.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td>
+      ${flat.length ? `<td>${studentProgressCell(st, flat)}</td>` : ""}
       <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
       <td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
       <td><button class="small" data-edit="${st.id}">Editar</button></td></tr>
-      <tr id="docs-row-${st.id}" class="hidden"><td colspan="8"><div id="docs-box-${st.id}"></div></td></tr>
-      <tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>}`).join("") || `<tr><td colspan="8" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
+      <tr id="docs-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div id="docs-box-${st.id}"></div></td></tr>
+      <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>}`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
   </div>
   <div class="card"><h2>Respaldo en Drive</h2>
@@ -1498,8 +1678,9 @@ async function renderStudents() {
     </div>
     <div class="row">
       <div><label>Fecha de inicio de clases</label><input id="st-start" type="date"></div>
-      <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" placeholder="Se calcula sola"></div>
+      <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" placeholder="Ej. 2027"></div>
     </div>
+    ${flat.length ? `<div class="row"><div><label>Clase actual</label><select id="st-class"><option value="">Sin asignar</option>${classOptionsHtml(flat, formClassIdx)}</select></div></div>` : ""}
     <div style="margin-top:12px"><h3>Diplomados</h3>
     ${diplomasCatalog.length ? diplomasCatalog.map(dp => {
       const cur = (editingSt && editingSt.diplomas && editingSt.diplomas[dp.id]) || "pendiente";
@@ -1632,22 +1813,33 @@ async function renderStudents() {
       renderStudents();
     } catch (e) { showErr($("exp-err"), "No se pudo quitar el acceso: " + (e.message || e)); }
   }));
+  s.querySelectorAll("[data-prog-student]").forEach(sel => sel.addEventListener("change", async () => {
+    const id = sel.getAttribute("data-prog-student");
+    const v = sel.value;
+    const textEl = $("prog-text-" + id);
+    try {
+      if (v === "") {
+        await db.collection("students").doc(id).update({ currentClass: firebase.firestore.FieldValue.delete() });
+        if (textEl) textEl.innerHTML = progressStudentHtml(flat, null);
+      } else {
+        const idx = parseInt(v, 10);
+        await db.collection("students").doc(id).update({ currentClass: idx });
+        if (textEl) textEl.innerHTML = progressStudentHtml(flat, idx);
+      }
+    } catch (e) { showErr($("exp-err"), "No se pudo guardar la clase actual: " + (e.message || e)); }
+  }));
   const cancel = $("btn-cancel-edit");
   if (cancel) cancel.addEventListener("click", () => { editingStudentId = null; renderStudents(); });
-  $("st-start").addEventListener("change", () => {
-    const g = calcGeneration($("st-start").value, (courses[selCourse] || {}).durationMonths || 12);
-    if (g) $("st-gen").value = g;
-  });
   $("btn-save-student").addEventListener("click", async () => {
     const name = $("st-name").value.trim();
     const curp = $("st-curp").value.trim();
     const phone = $("st-phone").value.trim();
     const startDate = $("st-start").value;
-    let generation = parseInt($("st-gen").value, 10);
-    if (!generation && startDate) generation = calcGeneration(startDate, (courses[selCourse] || {}).durationMonths || 12);
+    const generation = parseInt($("st-gen").value, 10);
     showErr($("st-err"), ""); showOk($("st-msg"), "");
     if (!name) { showErr($("st-err"), "Escribe el nombre del alumno."); return; }
     if (!selCourse || !selTeacher) { showErr($("st-err"), "Elige curso y maestro primero."); return; }
+    if (!generation) { showErr($("st-err"), "Escribe la generación del alumno (año de graduación, ej. 2027)."); return; }
     $("btn-save-student").disabled = true;
     try {
       const diplomasMap = {};
@@ -1655,9 +1847,14 @@ async function renderStudents() {
         const sel = $("diploma-sel-" + dp.id);
         if (sel && sel.value) diplomasMap[dp.id] = sel.value;
       });
-      const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation: generation || "", active: true, diplomas: diplomasMap };
+      const stClassSel = $("st-class");
+      const classVal = stClassSel ? stClassSel.value : null; // null = este curso no tiene temario
+      const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
+      if (classVal !== null && classVal !== "") data.currentClass = parseInt(classVal, 10);
       if (editingStudentId) {
-        await db.collection("students").doc(editingStudentId).update(data);
+        const upd = { ...data };
+        if (classVal === "") upd.currentClass = firebase.firestore.FieldValue.delete();
+        await db.collection("students").doc(editingStudentId).update(upd);
         showOk($("st-msg"), "Alumno actualizado.");
       } else {
         data.createdAt = Date.now();
