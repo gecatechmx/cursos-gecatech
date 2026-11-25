@@ -70,11 +70,14 @@
     <img id="login-logo" alt="Gecatech">
     <h1>Portal Maestros</h1>
     <p>Acceso privado para maestros y administrador de Gecatech.</p>
-    <label for="login-email">Correo</label>
-    <input id="login-email" type="email" autocomplete="username" placeholder="tu@correo.com">
-    <label for="login-pass">Contraseña</label>
-    <input id="login-pass" type="password" autocomplete="current-password" placeholder="Tu contraseña">
-    <div style="margin-top:16px"><button id="btn-login" style="width:100%">Entrar</button></div>
+    <p class="muted" id="session-check">Comprobando tu sesión…</p>
+    <div id="login-form" class="hidden">
+      <label for="login-email">Correo</label>
+      <input id="login-email" type="email" autocomplete="username" placeholder="tu@correo.com">
+      <label for="login-pass">Contraseña</label>
+      <input id="login-pass" type="password" autocomplete="current-password" placeholder="Tu contraseña">
+      <div style="margin-top:16px"><button id="btn-login" style="width:100%">Entrar</button></div>
+    </div>
     <div id="login-error" class="err"></div>
     <p class="muted">¿Olvidaste tu contraseña? Pídele al administrador que te ayude a restablecerla.</p>
   </div>
@@ -89,6 +92,7 @@
     <button class="ghost small" id="btn-logout">Salir</button>
   </header>
   <div class="wrap">
+    <p class="muted">Por seguridad, tu sesión se cierra si pasas 5 minutos sin usar el portal.</p>
     <div class="tabs" id="tabs"></div>
     <div id="section"></div>
   </div>
@@ -110,7 +114,7 @@ const firebaseConfig = {
 };
 const ADMIN_EMAIL = "anghelo.carrillo@gecatechmx.com";
 
-// ---------- Google Classroom (API oficial, solo lectura) ----------
+// ---------- Google Classroom (API oficial: lectura y escritura) ----------
 // El ID de cliente se consigue en Google Cloud Console (mismo proyecto de
 // Firebase o uno nuevo): Credenciales > ID de cliente de OAuth > Aplicación
 // web. Sin él, la pestaña Classroom muestra que falta la configuración.
@@ -119,7 +123,14 @@ const CLASSROOM_SCOPES = [
   "https://www.googleapis.com/auth/classroom.courses.readonly",
   "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
   "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
-  "https://www.googleapis.com/auth/classroom.rosters.readonly"
+  "https://www.googleapis.com/auth/classroom.rosters.readonly",
+  // Lectura extra: materiales publicados, temas y avisos del curso.
+  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
+  "https://www.googleapis.com/auth/classroom.topics.readonly",
+  "https://www.googleapis.com/auth/classroom.announcements.readonly",
+  // Escritura: calificar y devolver tareas, crear tareas y avisos.
+  "https://www.googleapis.com/auth/classroom.coursework.students",
+  "https://www.googleapis.com/auth/classroom.announcements"
 ];
 
 // ---------- Respaldo automático en Google Drive ----------
@@ -233,7 +244,69 @@ $("btn-login").addEventListener("click", async () => {
 $("login-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btn-login").click(); });
 $("btn-logout").addEventListener("click", async () => { await auth.signOut(); location.reload(); });
 
+// Restaurar la sesión guardada al cargar la página: si el navegador
+// guardó el inicio de sesión, se entra directo sin pedir correo y
+// contraseña. Mientras Firebase confirma si hay sesión, solo se muestra
+// "Comprobando tu sesión…" y el formulario no aparece.
+function showLoginForm() {
+  const chk = $("session-check");
+  if (chk) chk.classList.add("hidden");
+  const form = $("login-form");
+  if (form) form.classList.remove("hidden");
+}
+async function restoreSession(user) {
+  try {
+    await loadCourses();
+    const profile = await loadProfile(user.uid, user.email);
+    if (!profile) {
+      await auth.signOut();
+      showErr($("login-error"), "Tu cuenta no tiene perfil en el portal. Pídele al administrador que la active.");
+      showLoginForm();
+      return;
+    }
+    if (profile.active === false) {
+      await auth.signOut();
+      showErr($("login-error"), "Tu cuenta está desactivada. Habla con el administrador.");
+      showLoginForm();
+      return;
+    }
+    me = profile;
+    enterApp();
+  } catch (e) {
+    showErr($("login-error"), "No se pudo entrar: " + (e.message || e));
+    showLoginForm();
+  }
+}
+let authRestored = false;
+auth.onAuthStateChanged((user) => {
+  // Solo el primer evento restaura la sesión. Los siguientes (el inicio
+  // de sesión con el botón, el cierre de sesión) los maneja el flujo
+  // normal de la página.
+  if (authRestored) return;
+  authRestored = true;
+  if (user) restoreSession(user);
+  else showLoginForm();
+});
+
+// Cierre de sesión por inactividad: 5 minutos sin usar el portal.
+const IDLE_LIMIT_MS = 5 * 60 * 1000;
+let idleTimer = null;
+let idleArmed = false;
+function resetIdleTimer() {
+  if (!idleArmed) return;
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(async () => {
+    idleArmed = false;
+    try { await auth.signOut(); } catch (e) {}
+    location.reload();
+  }, IDLE_LIMIT_MS);
+}
+["click", "keydown", "mousemove", "scroll", "touchstart"].forEach(ev =>
+  window.addEventListener(ev, resetIdleTimer, { passive: true }));
+
 function enterApp() {
+  idleArmed = true;
+  resetIdleTimer();
   $("view-login").classList.add("hidden");
   $("view-app").classList.remove("hidden");
   $("user-chip").innerHTML = esc(me.name) + "<br>" + (me.role === "admin" ? "Administrador" : "Maestro/a");
@@ -263,15 +336,21 @@ async function renderSection() {
   }
 }
 
-// ---------- Google Classroom (API oficial, solo lectura) ----------
+// ---------- Google Classroom (API oficial: lectura y escritura) ----------
 // Classroom no se puede incrustar en un iframe (responde
 // X-Frame-Options: SAMEORIGIN), por eso se lee con la API oficial de
-// Google. El token de acceso vive solo en memoria: nunca se guarda en
-// localStorage ni en el código.
+// Google. El token de acceso vive solo en memoria y se renueva solo:
+// el permiso duradero (refresh token) se guarda en el servidor (Cloud
+// Function + Firestore, solo el servidor puede leerlo), nunca en
+// localStorage ni en el código. Por eso la conexión sobrevive al
+// recargar la página: al entrar, el portal pide un token nuevo al
+// servidor sin que tengas que conectar de nuevo.
 let classroomToken = null;
-let classroomTokenClient = null;
+let classroomTokenExpiresAt = 0;
+let classroomCodeClient = null;
 let classroomCourses = [];
 let classroomOpenCourse = "";
+let classroomRestoring = false;
 
 function loadGsiScript() {
   return new Promise((resolve, reject) => {
@@ -285,22 +364,122 @@ function loadGsiScript() {
   });
 }
 
-async function classroomFetch(path) {
-  const r = await fetch("https://classroom.googleapis.com/v1" + path, {
-    headers: { Authorization: "Bearer " + classroomToken }
+// Pide un token nuevo al servidor (usa el permiso guardado en el
+// servidor). Devuelve null si no hay conexión guardada.
+async function refreshClassroomToken() {
+  await loadFunctionsScript();
+  const fn = firebase.functions().httpsCallable("getClassroomToken");
+  const r = await fn({});
+  const d = r.data || {};
+  if (!d.connected || !d.accessToken) {
+    classroomToken = null;
+    classroomTokenExpiresAt = 0;
+    return null;
+  }
+  classroomToken = d.accessToken;
+  classroomTokenExpiresAt = Date.now() + (d.expiresIn || 3600) * 1000;
+  return classroomToken;
+}
+
+async function ensureClassroomToken() {
+  // Token válido todavía: se usa. Si vence en menos de 60 segundos, se
+  // renueva antes de llamar a Classroom.
+  if (classroomToken && Date.now() < classroomTokenExpiresAt - 60000) return classroomToken;
+  return refreshClassroomToken();
+}
+
+// Llamada a la API de Classroom. En 401 reintenta una vez con un token
+// nuevo del servidor; en 403 el permiso guardado no cubre lo pedido y
+// hay que reconectar para aceptar los permisos nuevos.
+async function classroomApi(path, opts) {
+  const o = opts || {};
+  const method = o.method || "GET";
+  const body = o.body || null;
+  const soft = !!o.soft;
+  const tok = await ensureClassroomToken();
+  if (!tok) {
+    if (soft) return null;
+    throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+  }
+  const doFetch = (t) => fetch("https://classroom.googleapis.com/v1" + path, {
+    method,
+    headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : null
   });
+  let r = await doFetch(tok);
+  if (r.status === 401) {
+    // El token ya no sirve: se pide uno nuevo al servidor y se reintenta
+    // una sola vez.
+    classroomToken = null;
+    classroomTokenExpiresAt = 0;
+    try {
+      const tok2 = await refreshClassroomToken();
+      if (tok2) r = await doFetch(tok2);
+    } catch (e) { /* sin conexión guardada: se sigue con el 401 */ }
+  }
   if (!r.ok) {
-    if (r.status === 401 || r.status === 403) throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+    if (r.status === 403) {
+      if (!soft) {
+        classroomToken = null;
+        classroomTokenExpiresAt = 0;
+        throw new Error("Classroom pidió permisos nuevos: desconecta y vuelve a conectar para aceptar los permisos de calificar y crear tareas.");
+      }
+      return null;
+    }
+    if (r.status === 401) {
+      if (!soft) {
+        classroomToken = null;
+        classroomTokenExpiresAt = 0;
+        throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+      }
+      return null;
+    }
+    if (soft) return null;
     throw new Error("Google Classroom no respondió (" + r.status + "). Intenta de nuevo.");
   }
+  if (r.status === 204) return {};
   return r.json();
 }
 
-function fmtDueDate(dueDate, dueTime) {
+async function classroomFetch(path) {
+  return classroomApi(path);
+}
+
+// Escritura en Classroom (calificar, devolver, crear tareas y avisos).
+async function classroomWrite(path, method, body) {
+  return classroomApi(path, { method, body });
+}
+
+// Lectura opcional (avisos, materiales, temas, maestros del curso): si
+// falla, devuelve null sin romper la pestaña ni cerrar la conexión.
+async function classroomFetchSoft(path) {
+  return classroomApi(path, { soft: true });
+}
+
+const MONTHS_SHORT_ES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+function fmtDueDateEs(dueDate, dueTime) {
   if (!dueDate) return "";
-  let s = dueDate.day + "/" + dueDate.month + "/" + dueDate.year;
-  if (dueTime && dueTime.hours != null) s += " " + String(dueTime.hours).padStart(2, "0") + ":" + String(dueTime.minutes || 0).padStart(2, "0");
+  let s = dueDate.day + " " + (MONTHS_SHORT_ES[(dueDate.month || 1) - 1] || "") + " " + dueDate.year;
+  if (dueTime && dueTime.hours != null) s += ", " + String(dueTime.hours).padStart(2, "0") + ":" + String(dueTime.minutes || 0).padStart(2, "0");
   return s;
+}
+function dueStatus(dueDate, dueTime) {
+  // "vencida" | "pronto" | "" — la hora de Classroom es la del curso;
+  // se compara con la hora local como aproximación.
+  if (!dueDate) return "";
+  const h = (dueTime && dueTime.hours != null) ? dueTime.hours : 23;
+  const m = (dueTime && dueTime.minutes != null) ? dueTime.minutes : 59;
+  const d = new Date(dueDate.year, (dueDate.month || 1) - 1, dueDate.day, h, m);
+  const now = new Date();
+  if (now > d) return "vencida";
+  if (d - now <= 3 * 24 * 60 * 60 * 1000) return "pronto";
+  return "";
+}
+function fmtDateTimeEs(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.getDate() + " " + (MONTHS_SHORT_ES[d.getMonth()] || "") + " " + d.getFullYear() + ", " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
 async function connectClassroom() {
@@ -311,31 +490,49 @@ async function connectClassroom() {
   }
   try {
     await loadGsiScript();
-    if (!classroomTokenClient) {
-      classroomTokenClient = google.accounts.oauth2.initTokenClient({
+    await loadFunctionsScript();
+    if (!classroomCodeClient) {
+      classroomCodeClient = google.accounts.oauth2.initCodeClient({
         client_id: CLASSROOM_CLIENT_ID,
         scope: CLASSROOM_SCOPES.join(" "),
-        callback: (resp) => {
-          if (resp && resp.access_token) {
-            classroomToken = resp.access_token;
-            renderClassroom();
+        ux_mode: "popup",
+        redirect_uri: "postmessage",
+        prompt: "consent",
+        callback: async (resp) => {
+          if (resp && resp.code) {
+            try {
+              const fn = firebase.functions().httpsCallable("exchangeClassroomCode");
+              const r = await fn({ code: resp.code });
+              const d = r.data || {};
+              classroomToken = d.accessToken;
+              classroomTokenExpiresAt = Date.now() + (d.expiresIn || 3600) * 1000;
+              classroomCourses = [];
+              renderClassroom();
+            } catch (e) {
+              if (errEl) showErr(errEl, "No se pudo conectar con Google Classroom: " + (e.message || e));
+            }
           } else if (errEl) {
-            showErr(errEl, "No se pudo conectar con Google. Intenta de nuevo.");
+            showErr(errEl, "No se completó la conexión con Google. Intenta de nuevo.");
           }
         }
       });
     }
-    classroomTokenClient.requestAccessToken({ prompt: "consent" });
+    classroomCodeClient.requestCode();
   } catch (e) {
     if (errEl) showErr(errEl, "No se pudo conectar: " + (e.message || e));
   }
 }
 
-function disconnectClassroom() {
-  if (classroomToken && window.google && google.accounts && google.accounts.oauth2) {
-    try { google.accounts.oauth2.revoke(classroomToken, () => {}); } catch (e) {}
+async function disconnectClassroom() {
+  try {
+    await loadFunctionsScript();
+    const fn = firebase.functions().httpsCallable("disconnectClassroom");
+    await fn({});
+  } catch (e) {
+    // Aunque el servidor falle, la conexión se limpia en el portal.
   }
   classroomToken = null;
+  classroomTokenExpiresAt = 0;
   classroomCourses = [];
   classroomOpenCourse = "";
   renderClassroom();
@@ -416,6 +613,262 @@ async function disconnectDrive() {
   }
 }
 
+// ---------- Classroom: datos por curso (caché en memoria) ----------
+let crCache = {}; // courseId -> {works, roster, teachers, subsByWork, topics, announcements, materials, subsReady}
+
+// Foto redonda del alumno (o círculo con su inicial si no tiene foto).
+function crPhotoHtml(profile, name) {
+  const url = profile && profile.photoUrl;
+  const initial = ((name || "?").trim().charAt(0) || "?").toUpperCase();
+  if (url) return `<img src="${esc(url)}" alt="" style="width:22px;height:22px;border-radius:50%;vertical-align:-6px;object-fit:cover">`;
+  return `<span style="display:inline-block;width:22px;height:22px;border-radius:50%;background:#e8e2d9;color:#555;text-align:center;line-height:22px;font-size:12px;vertical-align:-6px">${esc(initial)}</span>`;
+}
+function crPerson(c, uid) {
+  if (c) {
+    if (c.roster && c.roster[uid]) return c.roster[uid];
+    if (c.teachers && c.teachers[uid]) return c.teachers[uid];
+  }
+  return { name: uid, photoUrl: "" };
+}
+function crIsTurned(sub) {
+  return sub.state === "TURNED_IN" || sub.state === "RETURNED" || sub.state === "REJECTED";
+}
+function crStateLabel(sub) {
+  if (sub.state === "RETURNED" || sub.state === "REJECTED") return "Devuelta";
+  if (crIsTurned(sub)) return "Entregada";
+  return "Falta";
+}
+function crGradeText(sub, maxPoints) {
+  if (!sub) return "";
+  if (sub.assignedGrade != null) return sub.assignedGrade + "/" + maxPoints;
+  if (sub.draftGrade != null) return sub.draftGrade + "/" + maxPoints + " (borrador)";
+  return "";
+}
+function crPendingCount(c) {
+  let n = 0;
+  Object.values(c.subsByWork || {}).forEach(list => {
+    (list || []).forEach(s => { if (s.state === "TURNED_IN" && s.assignedGrade == null) n++; });
+  });
+  return n;
+}
+function crUpdatePendingTotal(courseId) {
+  const el = $("cr-pending-total-" + courseId);
+  const c = crCache[courseId];
+  if (!el || !c) return;
+  el.textContent = "Pendientes de calificar en este curso: " + crPendingCount(c);
+}
+
+// Vuelve a cargar las entregas de una tarea y actualiza su conteo, su
+// zona "Ver quiénes", el total de pendientes y la tabla de notas.
+async function crReloadTask(courseId, workId) {
+  const c = crCache[courseId];
+  if (!c) return;
+  try {
+    const subs = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(workId) + "/studentSubmissions?pageSize=100");
+    c.subsByWork[workId] = subs.studentSubmissions || [];
+  } catch (e) {
+    // Se deja la lista anterior; el error ya se muestra en la tarea.
+  }
+  const work = (c.works || []).find(w => w.id === workId);
+  if (work) crRenderTaskSubs(courseId, work);
+}
+
+// Renderiza el conteo y la zona "Ver quiénes" de una tarea con las
+// entregas ya cargadas: nombres con foto, pendientes de calificar con
+// su campo de nota y su botón de devolver.
+function crRenderTaskSubs(courseId, work) {
+  const c = crCache[courseId];
+  if (!c) return;
+  const subs = c.subsByWork[work.id] || [];
+  const el = $("cr-count-" + work.id);
+  const namesBox = $("cr-names-" + work.id);
+  const turned = subs.filter(crIsTurned).length;
+  if (el) el.textContent = "Entregadas " + turned + " de " + subs.length;
+  if (!namesBox) return;
+  const byName = (a, b) => crPerson(c, a.userId).name.localeCompare(crPerson(c, b.userId).name, "es");
+  const done = subs.filter(crIsTurned).sort(byName).map(x => {
+    const p = crPerson(c, x.userId);
+    return crPhotoHtml(p, p.name) + " " + esc(p.name) + (x.late ? " (tarde)" : "") + (x.state === "REJECTED" ? " (devuelta)" : "");
+  });
+  const pend = subs.filter(x => !crIsTurned(x)).sort(byName).map(x => {
+    const p = crPerson(c, x.userId);
+    return crPhotoHtml(p, p.name) + " " + esc(p.name);
+  });
+  const pending = subs.filter(x => x.state === "TURNED_IN" && x.assignedGrade == null);
+  let html = `<b>Entregaron (${done.length}):</b> ${done.length ? done.join(", ") : "nadie todavía."}<br><b>Faltan (${pend.length}):</b> ${pend.length ? pend.join(", ") : "nadie."}`;
+  html += `<br><b>Pendientes de calificar (${pending.length}):</b> `;
+  if (!pending.length) html += "ninguna.";
+  else {
+    html += pending.map(x => {
+      const p = crPerson(c, x.userId);
+      const pre = (x.draftGrade != null) ? x.draftGrade : "";
+      return `<div class="docline" style="margin:6px 0"><span>${crPhotoHtml(p, p.name)} ${esc(p.name)}</span><span><input type="number" min="0" max="${work.maxPoints || 100}" value="${pre}" id="cr-grade-${esc(work.id)}-${esc(x.id)}" style="width:64px" aria-label="Nota"> / ${work.maxPoints || 100} <button class="small gold" data-grade-save="${esc(work.id)}|${esc(x.id)}">Guardar nota</button> <button class="small ghost" data-grade-return="${esc(work.id)}|${esc(x.id)}|${esc(x.userId)}">Devolver</button> <span class="okmsg" id="cr-grade-msg-${esc(work.id)}-${esc(x.id)}"></span></span></div>`;
+    }).join("");
+  }
+  namesBox.innerHTML = html;
+  namesBox.querySelectorAll("[data-grade-save]").forEach(b => b.addEventListener("click", async () => {
+    const parts = b.getAttribute("data-grade-save").split("|");
+    const workId = parts[0], subId = parts[1];
+    const input = $("cr-grade-" + workId + "-" + subId);
+    const msgEl = $("cr-grade-msg-" + workId + "-" + subId);
+    const n = input ? parseInt(input.value, 10) : NaN;
+    const max = work.maxPoints || 100;
+    if (isNaN(n) || n < 0 || n > max) {
+      if (msgEl) { msgEl.className = "err"; msgEl.textContent = "Escribe una nota entre 0 y " + max + "."; }
+      return;
+    }
+    b.disabled = true;
+    try {
+      await classroomWrite("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(workId) + "/studentSubmissions/" + encodeURIComponent(subId) + "?updateMask=assignedGrade", "PATCH", { assignedGrade: n });
+      if (msgEl) { msgEl.className = "okmsg"; msgEl.textContent = "Nota guardada."; }
+      setTimeout(() => crReloadTask(courseId, workId), 900);
+    } catch (e) {
+      if (msgEl) { msgEl.className = "err"; msgEl.textContent = "No se pudo guardar: " + (e.message || e); }
+    } finally { b.disabled = false; }
+  }));
+  namesBox.querySelectorAll("[data-grade-return]").forEach(b => b.addEventListener("click", async () => {
+    const parts = b.getAttribute("data-grade-return").split("|");
+    const workId = parts[0], subId = parts[1], uid = parts[2];
+    const p = crPerson(c, uid);
+    const msgEl = $("cr-grade-msg-" + workId + "-" + subId);
+    if (!confirm("¿Devolver esta tarea a " + p.name + "?")) return;
+    b.disabled = true;
+    try {
+      await classroomWrite("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(workId) + "/studentSubmissions/" + encodeURIComponent(subId) + ":return", "POST", {});
+      if (msgEl) { msgEl.className = "okmsg"; msgEl.textContent = "Devuelta."; }
+      setTimeout(() => crReloadTask(courseId, workId), 900);
+    } catch (e) {
+      if (msgEl) { msgEl.className = "err"; msgEl.textContent = "No se pudo devolver: " + (e.message || e); }
+    } finally { b.disabled = false; }
+  }));
+  crUpdatePendingTotal(courseId);
+  const gradesBox = $("cr-grades-" + courseId);
+  if (gradesBox && !gradesBox.classList.contains("hidden")) renderCrGrades(courseId);
+}
+
+// Tabla de calificaciones por alumno: una fila por alumno, una columna
+// por tarea. "8/10" es nota final; "7/10 (borrador)" es nota en borrador.
+function renderCrGrades(courseId) {
+  const box = $("cr-grades-" + courseId);
+  const c = crCache[courseId];
+  if (!box || !c) return;
+  const works = c.works || [];
+  const students = Object.keys(c.roster || {}).map(uid => ({ userId: uid, name: c.roster[uid].name, photoUrl: c.roster[uid].photoUrl })).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  if (!works.length || !students.length) { box.innerHTML = `<p class="muted">No hay tareas o alumnos para mostrar.</p>`; return; }
+  const subOf = (uid, workId) => (c.subsByWork[workId] || []).find(s => s.userId === uid);
+  let html = `<div class="table-scroll"><table class="students"><tr><th>Alumno</th>` + works.map(w => `<th title="${esc(w.title || "Tarea")}">${esc((w.title || "Tarea").slice(0, 18))}</th>`).join("") + `<th></th></tr>`;
+  students.forEach((st, i) => {
+    html += `<tr><td>${crPhotoHtml(st, st.name)} ${esc(st.name)}</td>` + works.map(w => {
+      const s = subOf(st.userId, w.id);
+      const g = s ? crGradeText(s, w.maxPoints || 100) : "";
+      return `<td>${g ? esc(g) : "—"}</td>`;
+    }).join("") + `<td><button class="small ghost" data-cr-resumen="${esc(courseId)}|${i}">Resumen</button></td></tr>`;
+    html += `<tr id="cr-resumen-${esc(courseId)}-${i}" class="hidden"><td colspan="${works.length + 2}">` + works.map(w => {
+      const s = subOf(st.userId, w.id);
+      if (!s) return `<div>${esc(w.title || "Tarea")} — Falta</div>`;
+      return `<div>${esc(w.title || "Tarea")} — ${esc(crStateLabel(s))}${s.assignedGrade != null ? " · nota " + s.assignedGrade + "/" + (w.maxPoints || 100) : (s.draftGrade != null ? " · borrador " + s.draftGrade + "/" + (w.maxPoints || 100) : "")}${s.late ? " · (tarde)" : ""}</div>`;
+    }).join("") + `</td></tr>`;
+  });
+  html += `</table></div>`;
+  box.innerHTML = html;
+  box.querySelectorAll("[data-cr-resumen]").forEach(b => b.addEventListener("click", () => {
+    const parts = b.getAttribute("data-cr-resumen").split("|");
+    const row = $("cr-resumen-" + parts[0] + "-" + parts[1]);
+    if (row) {
+      const show = row.classList.contains("hidden");
+      row.classList.toggle("hidden", !show);
+      b.textContent = show ? "Ocultar" : "Resumen";
+    }
+  }));
+}
+
+// Exporta las entregas y notas del curso a Excel: una fila por alumno,
+// una columna por tarea ("8/10", "Entregada", "Falta", "Devuelta").
+async function crExportGrades(courseId) {
+  const c = crCache[courseId];
+  const course = (classroomCourses || []).find(x => x.id === courseId);
+  const msgEl = $("cr-export-msg-" + courseId);
+  try {
+    await (c && c.subsReady ? c.subsReady : Promise.resolve());
+    if (!c) throw new Error("Abre las tareas del curso primero.");
+    await ensureExcelJS();
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Entregas");
+    const works = c.works || [];
+    const students = Object.keys(c.roster || {}).map(uid => ({ userId: uid, name: c.roster[uid].name })).sort((a, b) => a.name.localeCompare(b.name, "es"));
+    ws.columns = [{ width: 32 }].concat(works.map(() => ({ width: 16 })));
+    ws.addRow(["Alumno"].concat(works.map(w => w.title || "Tarea")));
+    students.forEach(st => {
+      ws.addRow([st.name].concat(works.map(w => {
+        const s = (c.subsByWork[w.id] || []).find(x => x.userId === st.userId);
+        if (!s) return "Falta";
+        const late = s.late ? " (tarde)" : "";
+        if (s.assignedGrade != null) return s.assignedGrade + "/" + (w.maxPoints || 100) + late;
+        if (s.state === "RETURNED" || s.state === "REJECTED") return "Devuelta" + late;
+        if (crIsTurned(s)) return "Entregada" + late;
+        return "Falta";
+      })));
+    });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const a = document.createElement("a");
+    const now = new Date();
+    const stamp = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+    const slug = (course && course.name ? course.name : "curso").replace(/[^A-Za-z0-9]+/g, "_").slice(0, 40);
+    a.href = URL.createObjectURL(blob);
+    a.download = "Entregas_" + slug + "_" + stamp + ".xlsx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    if (msgEl) msgEl.textContent = "No se pudo exportar: " + (e.message || e);
+  }
+}
+
+// Avisos del curso (si la llamada falló, la sección no se muestra).
+function crRenderAnnouncements(courseId) {
+  const box = $("cr-ann-" + courseId);
+  const c = crCache[courseId];
+  if (!box || !c) return;
+  if (c.announcements === null) { box.innerHTML = ""; return; }
+  const list = c.announcements || [];
+  box.innerHTML = `<h3 style="font-size:15px;margin:12px 0 6px">Avisos</h3>` + (list.length ? list.map(a => {
+    const p = crPerson(c, a.creatorUserId);
+    return `<div class="docline"><span>${esc(a.text || "")}</span><span class="muted">${esc(p.name)} · ${esc(fmtDateTimeEs(a.creationTime))}</span></div>`;
+  }).join("") : `<p class="muted">No hay avisos todavía.</p>`);
+}
+
+// Materiales publicados del curso (si la llamada falló, no se muestra).
+function crRenderMaterials(courseId) {
+  const box = $("cr-mat-" + courseId);
+  const c = crCache[courseId];
+  if (!box || !c) return;
+  if (c.materials === null) { box.innerHTML = ""; return; }
+  const list = c.materials || [];
+  box.innerHTML = `<h3 style="font-size:15px;margin:12px 0 6px">Materiales</h3>` + (list.length ? list.map(m => {
+    const links = [];
+    (m.materials || []).forEach(mt => {
+      if (mt.link && mt.link.url) links.push(`<a href="${esc(mt.link.url)}" target="_blank" rel="noopener">${esc(mt.link.title || mt.link.url)}</a>`);
+      if (mt.driveFile && mt.driveFile.driveFile && mt.driveFile.driveFile.alternateLink) links.push(`<a href="${esc(mt.driveFile.driveFile.alternateLink)}" target="_blank" rel="noopener">${esc(mt.driveFile.driveFile.title || "Archivo de Drive")}</a>`);
+      if (mt.youtubeVideo && mt.youtubeVideo.alternateLink) links.push(`<a href="${esc(mt.youtubeVideo.alternateLink)}" target="_blank" rel="noopener">${esc(mt.youtubeVideo.title || "Video de YouTube")}</a>`);
+      if (mt.form && mt.form.formUrl) links.push(`<a href="${esc(mt.form.formUrl)}" target="_blank" rel="noopener">${esc(mt.form.title || "Formulario")}</a>`);
+    });
+    return `<div class="docline"><span><b>${esc(m.title || "Material")}</b>${m.description ? `<br><span class="muted">${esc(m.description)}</span>` : ""}${links.length ? `<br>` + links.join(" · ") : ""}</span></div>`;
+  }).join("") : `<p class="muted">No hay materiales publicados todavía.</p>`);
+}
+
+// Una tarea dentro de la lista: título, fecha de entrega con aviso de
+// vencida o vence pronto, conteo y botón "Ver quiénes".
+function crTaskHtml(courseId, w) {
+  const due = w.dueDate ? fmtDueDateEs(w.dueDate, w.dueTime) : "";
+  const st = dueStatus(w.dueDate, w.dueTime);
+  const badge = st === "vencida" ? ` <span class="badge off">Vencida</span>` : (st === "pronto" ? ` <span class="badge admin">Vence pronto</span>` : "");
+  return `<div class="docline"><span><b>${esc(w.title || "Tarea")}</b>${due ? ` <span class="muted">· Entrega: ${esc(due)}</span>` : ""}${badge}</span>
+    <span class="muted" id="cr-count-${esc(w.id)}">Contando entregas…</span></div>
+    <div><button class="small ghost" id="cr-who-${esc(w.id)}">Ver quiénes</button>
+    <div id="cr-names-${esc(w.id)}" class="muted hidden">Cargando nombres…</div></div>`;
+}
+
 async function showCourseWork(courseId) {
   const box = $("cr-work-" + courseId);
   if (!box) return;
@@ -423,54 +876,185 @@ async function showCourseWork(courseId) {
   try {
     const data = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork?pageSize=50");
     const works = data.courseWork || [];
-    if (!works.length) { box.innerHTML = `<p class="muted">Esta clase no tiene tareas todavía.</p>`; return; }
-    // Lista de alumnos del curso (nombre por userId) para mostrar quién entregó.
-    let roster = null;
+    // Lista de alumnos (nombre y foto por userId) y maestros del curso.
+    const roster = {};
     try {
       const st = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/students?pageSize=100");
-      roster = {};
       (st.students || []).forEach(s => {
-        const nm = (s.profile && s.profile.name && s.profile.name.fullName) || s.userId;
-        roster[s.userId] = nm;
+        const prof = s.profile || {};
+        roster[s.userId] = { name: (prof.name && prof.name.fullName) || s.userId, photoUrl: prof.photoUrl || "" };
       });
-    } catch (e) { roster = null; }
-    const nameOf = (uid) => (roster && roster[uid]) || uid;
-    box.innerHTML = works.map(w => `<div class="docline"><span><b>${esc(w.title || "Tarea")}</b>${w.dueDate ? ` <span class="muted">· Entrega: ${esc(fmtDueDate(w.dueDate, w.dueTime))}</span>` : ""}</span>
-      <span class="muted" id="cr-count-${esc(w.id)}">Contando entregas…</span></div>
-      <div><button class="small ghost" id="cr-who-${esc(w.id)}">Ver quiénes</button>
-      <div id="cr-names-${esc(w.id)}" class="muted hidden">Cargando nombres…</div></div>`).join("");
-    works.forEach((w) => {
-      const btn = $("cr-who-" + w.id);
-      const namesBox = $("cr-names-" + w.id);
-      if (btn && namesBox) btn.addEventListener("click", () => {
-        const show = namesBox.classList.contains("hidden");
-        namesBox.classList.toggle("hidden", !show);
-        btn.textContent = show ? "Ocultar" : "Ver quiénes";
+    } catch (e) { /* sin lista no se pueden mostrar nombres; se sigue con userIds */ }
+    const teachers = {};
+    try {
+      const t = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/teachers?pageSize=50");
+      if (t) (t.teachers || []).forEach(x => {
+        const prof = x.profile || {};
+        teachers[x.userId] = { name: (prof.name && prof.name.fullName) || x.userId, photoUrl: prof.photoUrl || "" };
       });
+    } catch (e) { /* opcional: los avisos se muestran sin nombre */ }
+    // Temas, avisos y materiales: si fallan (permiso viejo), la pestaña
+    // sigue igual y esas secciones simplemente no aparecen.
+    let topics = null;
+    const tData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/topics?pageSize=50");
+    if (tData) topics = tData.topics || [];
+    let announcements = null;
+    const aData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/announcements?pageSize=20");
+    if (aData) announcements = aData.announcements || [];
+    let materials = null;
+    const mData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/courseWorkMaterial?pageSize=20");
+    if (mData) materials = mData.courseWorkMaterial || [];
+    crCache[courseId] = { works, roster, teachers, subsByWork: {}, topics, announcements, materials, subsReady: null };
+    const topicOptions = (topics || []).map(t => `<option value="${esc(t.topicId)}">${esc(t.name)}</option>`).join("");
+    box.innerHTML = `
+    <div class="row" style="margin:8px 0;flex-wrap:wrap">
+      <button class="small" id="cr-grades-btn-${esc(courseId)}">Ver calificaciones</button>
+      <button class="small" id="cr-export-btn-${esc(courseId)}">Exportar entregas en Excel</button>
+      <button class="small" id="cr-newwork-btn-${esc(courseId)}">Nueva tarea</button>
+      <button class="small" id="cr-newann-btn-${esc(courseId)}">Nuevo aviso</button>
+      <span class="err" id="cr-export-msg-${esc(courseId)}"></span>
+    </div>
+    <p class="muted" id="cr-pending-total-${esc(courseId)}">Contando pendientes de calificar…</p>
+    <div id="cr-grades-${esc(courseId)}" class="hidden"></div>
+    <div id="cr-newwork-${esc(courseId)}" class="hidden card" style="margin:10px 0">
+      <h3 style="font-size:15px">Nueva tarea</h3>
+      <p class="muted">Se publica de inmediato en Classroom.</p>
+      <div><label>Título</label><input id="cr-nw-title-${esc(courseId)}" type="text" placeholder="Nombre de la tarea"></div>
+      <div><label>Descripción</label><textarea id="cr-nw-desc-${esc(courseId)}" rows="2" placeholder="Instrucciones para los alumnos (opcional)"></textarea></div>
+      <div class="row">
+        <div><label>Puntos máximos</label><input id="cr-nw-points-${esc(courseId)}" type="number" min="1" value="100" style="width:90px"></div>
+        <div><label>Fecha de entrega (opcional)</label><input id="cr-nw-due-${esc(courseId)}" type="date"></div>
+        <div><label>Tema (opcional)</label><select id="cr-nw-topic-${esc(courseId)}"><option value="">Sin tema</option>${topicOptions}</select></div>
+      </div>
+      <div style="margin-top:10px"><button class="small gold" id="cr-nw-save-${esc(courseId)}">Publicar tarea</button></div>
+      <div id="cr-nw-msg-${esc(courseId)}" class="okmsg"></div><div id="cr-nw-err-${esc(courseId)}" class="err"></div>
+    </div>
+    <div id="cr-newann-${esc(courseId)}" class="hidden card" style="margin:10px 0">
+      <h3 style="font-size:15px">Nuevo aviso</h3>
+      <p class="muted">Se publica de inmediato en Classroom.</p>
+      <div><label>Aviso</label><textarea id="cr-na-text-${esc(courseId)}" rows="3" placeholder="Escribe el aviso para tus alumnos"></textarea></div>
+      <div style="margin-top:10px"><button class="small gold" id="cr-na-save-${esc(courseId)}">Publicar aviso</button></div>
+      <div id="cr-na-msg-${esc(courseId)}" class="okmsg"></div><div id="cr-na-err-${esc(courseId)}" class="err"></div>
+    </div>
+    <div id="cr-ann-${esc(courseId)}"></div>
+    <div id="cr-mat-${esc(courseId)}"></div>
+    <div id="cr-tasks-${esc(courseId)}"></div>`;
+    // Botones del curso.
+    const gradesBtn = $("cr-grades-btn-" + courseId);
+    const gradesBox = $("cr-grades-" + courseId);
+    if (gradesBtn && gradesBox) gradesBtn.addEventListener("click", async () => {
+      const show = gradesBox.classList.contains("hidden");
+      if (!show) { gradesBox.classList.add("hidden"); gradesBtn.textContent = "Ver calificaciones"; return; }
+      gradesBtn.textContent = "Ocultar calificaciones";
+      gradesBox.classList.remove("hidden");
+      gradesBox.innerHTML = `<p class="muted">Cargando calificaciones…</p>`;
+      await (crCache[courseId].subsReady || Promise.resolve());
+      renderCrGrades(courseId);
     });
-    works.forEach(async (w) => {
-      const el = $("cr-count-" + w.id);
-      const namesBox = $("cr-names-" + w.id);
+    const expBtn = $("cr-export-btn-" + courseId);
+    if (expBtn) expBtn.addEventListener("click", () => crExportGrades(courseId));
+    const nwBtn = $("cr-newwork-btn-" + courseId);
+    const nwForm = $("cr-newwork-" + courseId);
+    if (nwBtn && nwForm) nwBtn.addEventListener("click", () => {
+      const show = nwForm.classList.contains("hidden");
+      nwForm.classList.toggle("hidden", !show);
+      nwBtn.textContent = show ? "Ocultar nueva tarea" : "Nueva tarea";
+    });
+    const naBtn = $("cr-newann-btn-" + courseId);
+    const naForm = $("cr-newann-" + courseId);
+    if (naBtn && naForm) naBtn.addEventListener("click", () => {
+      const show = naForm.classList.contains("hidden");
+      naForm.classList.toggle("hidden", !show);
+      naBtn.textContent = show ? "Ocultar nuevo aviso" : "Nuevo aviso";
+    });
+    const nwSave = $("cr-nw-save-" + courseId);
+    if (nwSave) nwSave.addEventListener("click", async () => {
+      const title = $("cr-nw-title-" + courseId).value.trim();
+      const desc = $("cr-nw-desc-" + courseId).value.trim();
+      const points = parseInt($("cr-nw-points-" + courseId).value, 10) || 100;
+      const dueVal = $("cr-nw-due-" + courseId).value;
+      const topicId = $("cr-nw-topic-" + courseId).value;
+      const msgEl = $("cr-nw-msg-" + courseId), errEl = $("cr-nw-err-" + courseId);
+      showErr(errEl, ""); showOk(msgEl, "");
+      if (!title) { showErr(errEl, "Escribe el título de la tarea."); return; }
+      if (points < 1) { showErr(errEl, "Los puntos máximos deben ser al menos 1."); return; }
+      const body = { title, description: desc, maxPoints: points, workType: "ASSIGNMENT", state: "PUBLISHED" };
+      if (dueVal) {
+        const parts = dueVal.split("-");
+        body.dueDate = { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10), day: parseInt(parts[2], 10) };
+        body.dueTime = { hours: 23, minutes: 59 };
+      }
+      if (topicId) body.topicId = topicId;
+      nwSave.disabled = true;
+      try {
+        await classroomWrite("/courses/" + encodeURIComponent(courseId) + "/courseWork", "POST", body);
+        showOk(msgEl, "Tarea publicada en Classroom.");
+        setTimeout(() => showCourseWork(courseId), 900);
+      } catch (e) {
+        showErr(errEl, "No se pudo publicar: " + (e.message || e));
+      } finally { nwSave.disabled = false; }
+    });
+    const naSave = $("cr-na-save-" + courseId);
+    if (naSave) naSave.addEventListener("click", async () => {
+      const text = $("cr-na-text-" + courseId).value.trim();
+      const msgEl = $("cr-na-msg-" + courseId), errEl = $("cr-na-err-" + courseId);
+      showErr(errEl, ""); showOk(msgEl, "");
+      if (!text) { showErr(errEl, "Escribe el aviso."); return; }
+      naSave.disabled = true;
+      try {
+        await classroomWrite("/courses/" + encodeURIComponent(courseId) + "/announcements", "POST", { text, state: "PUBLISHED" });
+        showOk(msgEl, "Aviso publicado en Classroom.");
+        setTimeout(() => showCourseWork(courseId), 900);
+      } catch (e) {
+        showErr(errEl, "No se pudo publicar: " + (e.message || e));
+      } finally { naSave.disabled = false; }
+    });
+    crRenderAnnouncements(courseId);
+    crRenderMaterials(courseId);
+    // Tareas, agrupadas por tema cuando se pudieron cargar los temas.
+    const tasksBox = $("cr-tasks-" + courseId);
+    if (tasksBox) {
+      if (!works.length) {
+        tasksBox.innerHTML = `<p class="muted">Esta clase no tiene tareas todavía.</p>`;
+      } else {
+        const groups = [];
+        if (topics) {
+          topics.forEach(t => groups.push({ title: t.name, items: works.filter(w => w.topicId === t.topicId) }));
+          const noTopic = works.filter(w => !w.topicId);
+          if (noTopic.length) groups.push({ title: "Sin tema", items: noTopic });
+        } else {
+          groups.push({ title: "", items: works });
+        }
+        tasksBox.innerHTML = groups.filter(g => g.items.length).map(g => (g.title ? `<h3 style="font-size:15px;margin:12px 0 6px">${esc(g.title)}</h3>` : "") + g.items.map(w => crTaskHtml(courseId, w)).join("")).join("");
+        works.forEach((w) => {
+          const btn = $("cr-who-" + w.id);
+          const namesBox = $("cr-names-" + w.id);
+          if (btn && namesBox) btn.addEventListener("click", () => {
+            const show = namesBox.classList.contains("hidden");
+            namesBox.classList.toggle("hidden", !show);
+            btn.textContent = show ? "Ocultar" : "Ver quiénes";
+          });
+        });
+      }
+    }
+    // Entregas por tarea (en paralelo): al llegar cada una, se actualiza
+    // su conteo, su zona "Ver quiénes" y el total de pendientes.
+    const subsPromises = works.map(async (w) => {
       try {
         const subs = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(w.id) + "/studentSubmissions?pageSize=100");
-        const list = subs.studentSubmissions || [];
-        // Entregada = el alumno la mandó (TURNED_IN, RETURNED o REJECTED); pendiente = NEW o CREATED.
-        const isTurned = (x) => x.state === "TURNED_IN" || x.state === "RETURNED" || x.state === "REJECTED";
-        const turned = list.filter(isTurned).length;
-        if (el) el.textContent = "Entregadas " + turned + " de " + list.length;
-        if (namesBox) {
-          if (!roster) { namesBox.textContent = "No se pudieron cargar los nombres."; }
-          else {
-            const done = list.filter(isTurned).map(x => nameOf(x.userId) + (x.state === "REJECTED" ? " (devuelta)" : "")).sort((a, b) => a.localeCompare(b, "es"));
-            const pend = list.filter(x => !isTurned(x)).map(x => nameOf(x.userId)).sort((a, b) => a.localeCompare(b, "es"));
-            namesBox.innerHTML = `<b>Entregaron (${done.length}):</b> ${done.length ? esc(done.join(", ")) : "nadie todavía."}<br><b>Faltan (${pend.length}):</b> ${pend.length ? esc(pend.join(", ")) : "nadie."}`;
-          }
-        }
+        crCache[courseId].subsByWork[w.id] = subs.studentSubmissions || [];
       } catch (e) {
+        crCache[courseId].subsByWork[w.id] = [];
+        const el = $("cr-count-" + w.id);
         if (el) el.textContent = "No se pudo contar las entregas.";
+        const namesBox = $("cr-names-" + w.id);
         if (namesBox) namesBox.textContent = "No se pudieron cargar los nombres.";
+        return;
       }
+      crRenderTaskSubs(courseId, w);
     });
+    crCache[courseId].subsReady = Promise.allSettled(subsPromises);
+    crUpdatePendingTotal(courseId);
   } catch (e) {
     box.innerHTML = `<p class="err">${esc(e.message || "No se pudieron cargar las tareas.")}</p>`;
   }
@@ -490,11 +1074,25 @@ async function renderClassroom() {
     return;
   }
   if (!classroomToken) {
+    // ¿Ya había una conexión guardada? Se restaura sola, sin pedir nada.
+    // Si no hay nada guardado, se muestra el botón de conectar.
+    if (!classroomRestoring) {
+      classroomRestoring = true;
+      s.innerHTML = `<div class="card"><h2>Classroom</h2><p class="muted">Comprobando tu conexión con Classroom…</p></div>`;
+      try {
+        const tok = await refreshClassroomToken();
+        classroomRestoring = false;
+        if (tok) { renderClassroom(); return; }
+      } catch (e) {
+        classroomRestoring = false;
+      }
+    }
     s.innerHTML = `
     <div class="card"><h2>Classroom</h2>
       <p class="hint">Conecta tu cuenta de Google para ver aquí mismo tus clases de Classroom, tus tareas y cuántos alumnos ya entregaron, sin salir del portal.</p>
-      <p class="muted">Solo se lee tu información de Classroom (tus clases y tus tareas). No se cambia nada, no se guarda tu cuenta de Google en el portal y puedes desconectar cuando quieras.</p>
+      <p class="muted">Se lee tu información de Classroom (tus clases, tareas, avisos y materiales) y, con tu permiso, también se puede calificar y crear tareas desde el portal. Tu conexión queda guardada de forma protegida en el servidor para que no tengas que conectar de nuevo al recargar, y puedes desconectar cuando quieras.</p>
       <button class="gold" id="btn-cr-connect">Conectar con Google Classroom</button>
+      <p class="muted">Al conectar se pedirán los permisos nuevos (ver avisos y materiales, calificar y crear tareas).</p>
       <div id="cr-err" class="err"></div>
     </div>`;
     $("btn-cr-connect").addEventListener("click", connectClassroom);
@@ -515,7 +1113,7 @@ async function renderClassroom() {
   }
   s.innerHTML = `
   <div class="card"><h2>Classroom</h2>
-    <p class="hint">Tus clases de Google Classroom. Toca "Ver tareas" para ver el trabajo de cada clase, cuántos alumnos entregaron y quiénes fueron.</p>
+    <p class="hint">Tus clases de Google Classroom. Toca "Ver tareas" para ver el trabajo de cada clase, las calificaciones, los avisos y quiénes entregaron.</p>
     <div style="margin-bottom:10px"><button class="ghost small" id="btn-cr-disconnect">Desconectar</button></div>
     ${classroomCourses.length ? classroomCourses.map(c => `
       <div class="card" style="margin:10px 0">
@@ -877,15 +1475,15 @@ async function renderStudents() {
       <button id="btn-toggle-cols" class="ghost">${showAllCols ? "Ver tabla compacta" : "Ver tabla completa"}</button>
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
-    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th>${isAdmin ? "<th>Acceso</th>" : ""}<th></th></tr>
+    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Docs</th><th>Acceso</th><th></th></tr>
     ${students.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td>
       <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
-      ${isAdmin ? `<td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>` : ""}
+      <td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
       <td><button class="small" data-edit="${st.id}">Editar</button></td></tr>
-      <tr id="docs-row-${st.id}" class="hidden"><td colspan="${isAdmin ? 8 : 7}"><div id="docs-box-${st.id}"></div></td></tr>
-      ${isAdmin ? `<tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>` : ""}`).join("") || `<tr><td colspan="${isAdmin ? 8 : 7}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
+      <tr id="docs-row-${st.id}" class="hidden"><td colspan="8"><div id="docs-box-${st.id}"></div></td></tr>
+      <tr id="acct-row-${st.id}" class="hidden"><td colspan="8"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>}`).join("") || `<tr><td colspan="8" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
   </div>
   <div class="card"><h2>Respaldo en Drive</h2>
