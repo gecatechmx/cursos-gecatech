@@ -55,11 +55,14 @@
     <img id="login-logo" alt="Gecatech">
     <h1>Portal Alumnos</h1>
     <p>Acceso privado para alumnos de Gecatech.</p>
-    <label for="login-email">Correo</label>
-    <input id="login-email" type="email" autocomplete="username" placeholder="tu@correo.com">
-    <label for="login-pass">Contraseña</label>
-    <input id="login-pass" type="password" autocomplete="current-password" placeholder="Tu contraseña">
-    <div style="margin-top:16px"><button id="btn-login" style="width:100%">Entrar</button></div>
+    <p class="muted" id="session-check">Comprobando tu sesión…</p>
+    <div id="login-form" class="hidden">
+      <label for="login-email">Correo</label>
+      <input id="login-email" type="email" autocomplete="username" placeholder="tu@correo.com">
+      <label for="login-pass">Contraseña</label>
+      <input id="login-pass" type="password" autocomplete="current-password" placeholder="Tu contraseña">
+      <div style="margin-top:16px"><button id="btn-login" style="width:100%">Entrar</button></div>
+    </div>
     <div id="login-error" class="err"></div>
     <p><a href="#" id="link-reset">¿Olvidaste tu contraseña?</a></p>
     <div id="reset-msg" class="okmsg"></div><div id="reset-err" class="err"></div>
@@ -161,6 +164,32 @@ $("link-reset").addEventListener("click", async (e) => {
   }
 });
 $("btn-logout").addEventListener("click", async () => { await auth.signOut(); location.reload(); });
+
+// Restaurar la sesión guardada al cargar la página: si el navegador
+// guardó el inicio de sesión, se entra directo sin pedir correo y
+// contraseña. Mientras Firebase confirma si hay sesión, solo se muestra
+// "Comprobando tu sesión…" y el formulario no aparece.
+function showLoginForm() {
+  const chk = $("session-check");
+  if (chk) chk.classList.add("hidden");
+  const form = $("login-form");
+  if (form) form.classList.remove("hidden");
+}
+let authRestored = false;
+auth.onAuthStateChanged((user) => {
+  // Solo el primer evento restaura la sesión. Los siguientes (el inicio
+  // de sesión con el botón, el cierre de sesión) los maneja el flujo
+  // normal de la página.
+  if (authRestored) return;
+  authRestored = true;
+  if (user) {
+    myUid = user.uid;
+    myEmail = user.email || "";
+    enterApp();
+  } else {
+    showLoginForm();
+  }
+});
 
 // ---------- Mis cursos ----------
 async function loadEnrollments() {
