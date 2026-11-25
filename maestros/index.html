@@ -176,6 +176,13 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let me = null;          // {uid, name, email, role, courses[], active}
+let isAdmin = false;    // Privilegios de administrador: existe el
+                        // documento admins/{uid}, igual que en el servidor
+                        // (ver isAdmin() en firestore.rules). La ficha de
+                        // maestro puede ser role "teacher" y aun así tener
+                        // privilegios de admin: así la cuenta funciona como
+                        // maestro (sus clases, sus alumnos) y como
+                        // administrador a la vez.
 let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
 let currentTab = "alumnos";
 let selCourse = "";
@@ -227,6 +234,23 @@ async function loadProfile(uid, email) {
   }
   return null;
 }
+// Decide si el usuario es administrador a partir de la lectura de
+// admins/{uid}: existe el documento → admin. Si la lectura falla
+// (reglas aún sin publicar), se usa el rol viejo de la ficha como
+// respaldo para no dejar al administrador sin sus funciones. Se prueba
+// en Node.
+function adminFlagFromRead(docExists, readFailed, profile) {
+  if (!readFailed) return !!docExists;
+  return !!(profile && profile.role === "admin");
+}
+async function loadAdminFlag(uid, profile) {
+  try {
+    const d = await db.collection("admins").doc(uid).get();
+    return adminFlagFromRead(d.exists, false, profile);
+  } catch (e) {
+    return adminFlagFromRead(false, true, profile);
+  }
+}
 async function loadCourses() {
   const snap = await db.collection("courses").get();
   courses = {};
@@ -253,6 +277,7 @@ $("btn-login").addEventListener("click", async () => {
       return;
     }
     me = profile;
+    isAdmin = await loadAdminFlag(cred.user.uid, profile);
     enterApp();
   } catch (e) {
     const msg = (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
@@ -290,6 +315,7 @@ async function restoreSession(user) {
       return;
     }
     me = profile;
+    isAdmin = await loadAdminFlag(user.uid, profile);
     enterApp();
   } catch (e) {
     showErr($("login-error"), "No se pudo entrar: " + (e.message || e));
@@ -331,10 +357,10 @@ function enterApp() {
   if (me.mustChangePassword === true) currentTab = "cuenta";
   $("view-login").classList.add("hidden");
   $("view-app").classList.remove("hidden");
-  $("user-chip").innerHTML = esc(me.name) + "<br>" + (me.role === "admin" ? "Administrador" : "Maestro/a");
+  $("user-chip").innerHTML = esc(me.name) + "<br>" + (isAdmin ? "Administrador" : "Maestro/a");
   const tabs = $("tabs");
   tabs.innerHTML = "";
-  const defs = me.role === "admin"
+  const defs = isAdmin
     ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]]
     : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]];
   defs.forEach(([id, label]) => {
@@ -621,6 +647,22 @@ async function disconnectDrive() {
   } catch (e) {
     if (errEl) showErr(errEl, "No se pudo desconectar: " + (e.message || e));
   }
+}
+
+// Decide qué muestra la zona de acciones de la tarjeta "Respaldo en Drive"
+// en la vista Alumnos. Se prueba en Node.
+// - Admin viendo a OTRA maestra: solo el texto de solo lectura (sin botones).
+// - Admin viendo SU propio estado (isSelf): conecta su Drive igual que una
+//   maestra, porque también da clases y sus alumnos necesitan el respaldo.
+// - Maestra: botón conectar o desconectar según tenga conexión.
+// - Sin configurar (configured=false): sin botones (el aviso sale en la
+//   línea de estado de la tarjeta).
+function driveCardActionsHtml(o) {
+  o = o || {};
+  if (o.isAdmin && !o.isSelf) return `<p class="muted">Solo el maestro puede conectar su Drive. Estás viendo el estado de ${o.teacherName || ""}.</p>`;
+  if (!o.configured) return ``;
+  if (o.connected) return `<button id="btn-drive-disconnect" class="ghost">Desconectar mi Google Drive</button>`;
+  return `<button id="btn-drive-connect" class="gold">Conectar mi Google Drive</button>`;
 }
 
 // ---------- Calendario de Google y Meet ----------
@@ -1624,16 +1666,17 @@ function studentProgressCell(st, calendar) {
 // ve en Mis alumnos / Mis clases, nunca en una vista general.
 const CAL_DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const CAL_DAY_NUM = [1, 2, 3, 4, 5, 6, 0]; // Lunes..Domingo en 0=Dom..6=Sáb
-function calendarClassesFor(list, me) {
+function calendarClassesFor(list, me, isAdminFlag) {
   // Clases visibles en el calendario: todas para el admin, solo las
-  // propias para cada maestra. Se prueba en Node.
+  // propias para cada maestra. El privilegio de admin viene del
+  // documento admins/{uid}, no del role de la ficha: una cuenta puede
+  // ser maestro y admin a la vez. Se prueba en Node.
   if (!list) return [];
-  if (me && me.role === "admin") return list.filter(c => c.active !== false);
+  if (isAdminFlag) return list.filter(c => c.active !== false);
   return list.filter(c => c.active !== false && me && c.teacherId === me.uid);
 }
 async function renderCalendar() {
   const s = $("section");
-  const isAdmin = me.role === "admin";
   s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2><p class="muted">Cargando clases…</p></div>`;
   let all = [];
   let teacherNames = {};
@@ -1650,7 +1693,7 @@ async function renderCalendar() {
     s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2><p class="err">No se pudieron cargar las clases: ${esc(e.message || e)}</p></div>`;
     return;
   }
-  const shown = calendarClassesFor(all, me);
+  const shown = calendarClassesFor(all, me, isAdmin);
   const byDay = CAL_DAY_NUM.map(() => []);
   shown.forEach(c => (c.days || []).forEach(d => {
     const idx = CAL_DAY_NUM.indexOf(d);
@@ -1936,6 +1979,10 @@ async function renderTeachers() {
   });
   s.querySelectorAll("[data-toggle-user]").forEach(b => b.addEventListener("click", async () => {
     const uid = b.getAttribute("data-toggle-user");
+    // Nadie puede desactivar su propia cuenta: con el doble rol, la
+    // fila del administrador también muestra el botón Desactivar
+    // (su ficha es role "teacher"), así que se rechaza aquí.
+    if (uid === me.uid) { showErr($("nt-err"), "No puedes desactivar tu propia cuenta."); return; }
     const activate = b.getAttribute("data-active") === "1";
     await db.collection("teachers").doc(uid).update({ active: activate });
     renderTeachers();
@@ -2125,7 +2172,7 @@ async function renderAccount() {
   calendarConn = await fetchCalendarConnection(me.uid);
   s.innerHTML = `
   <div class="card"><h2>Mi cuenta</h2>
-    <p><strong>${esc(me.name)}</strong> · ${esc(me.email)} · ${me.role === "admin" ? "Administrador" : "Maestro/a"}</p>
+    <p><strong>${esc(me.name)}</strong> · ${esc(me.email)} · ${isAdmin ? "Administrador" : "Maestro/a"}</p>
     <p class="muted">Último cambio de contraseña: ${fmtPassDate(me.passwordChangedAt)}.</p>
     ${must ? `<p class="err" style="font-weight:600">Tu contraseña fue restablecida por el administrador. Cámbiala ahora por una contraseña tuya.</p>` : ""}
   </div>
@@ -2624,7 +2671,6 @@ async function openTeacherClasses(uid, name) {
 
 async function renderStudents() {
   const s = $("section");
-  const isAdmin = me.role === "admin";
   let myCourseIds = isAdmin ? Object.keys(courses) : (me.courses || []);
   if (!selCourse || !myCourseIds.includes(selCourse)) selCourse = myCourseIds[0] || "";
   let teachers = [];
@@ -2669,10 +2715,21 @@ async function renderStudents() {
     : (defClass ? classEffectiveWeekIdx(defClass, myClasses, course) : null);
   const courseOptions = myCourseIds.map(id => `<option value="${id}" ${id === selCourse ? "selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const teacherOptions = isAdmin ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
+  // Aviso de clase pendiente: cuando el admin ve a otra maestra, el
+  // aviso habla de ella por su nombre; cuando se ve a sí mismo (o es
+  // la maestra), habla en segunda persona.
+  const classOwnerIsSelf = !isAdmin || selTeacher === me.uid;
+  const classOwnerName = classOwnerIsSelf ? "" : (teacherObj ? teacherObj.name : "Esta maestra");
+  const noClassesMsg = classOwnerIsSelf
+    ? "Aún no tienes ninguna clase registrada. Primero registra tu clase (curso, días y horario) para poder dar de alta alumnos."
+    : classOwnerName + " aún no tiene ninguna clase registrada. Regístrale una clase (curso, días y horario) para poder dar de alta alumnos.";
+  const noCourseClassMsg = classOwnerIsSelf
+    ? "Aún no tienes una clase registrada para " + (course.name || "este curso") + ". Regístrala para poder dar de alta alumnos en este curso."
+    : classOwnerName + " aún no tiene una clase registrada para " + (course.name || "este curso") + ". Regístrale una para poder dar de alta alumnos en este curso.";
   s.innerHTML = `
   <div class="card"><h2>${isAdmin ? "Alumnos" : "Mis alumnos"}</h2>
     <p class="hint">La generación la elige el maestro al dar de alta al alumno (año de graduación). La fecha de inicio y la duración del curso no la determinan.</p>
-    ${!myClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">Aún no tienes ninguna clase registrada. Primero registra tu clase (curso, días y horario) para poder dar de alta alumnos.</p><p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : (selCourse && !courseClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">Aún no tienes una clase registrada para ${esc(course.name || "este curso")}. Regístrala para poder dar de alta alumnos en este curso.</p><p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : "")}
+    ${!myClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noClassesMsg)}</p><p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : (selCourse && !courseClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noCourseClassMsg)}</p><p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : "")}
     <div class="row">
       <div><label>Curso</label><select id="sel-course">${courseOptions}</select></div>
       ${isAdmin ? `<div><label>Maestro/a</label><select id="sel-teacher">${teacherOptions}</select></div>` : ""}
@@ -2705,7 +2762,7 @@ async function renderStudents() {
   <div class="card"><h2>Respaldo en Drive</h2>
     <p class="hint">Cada documento (PDF) que subas tú o tus alumnos se guarda en el portal y, si conectas tu Google Drive, también se copia automáticamente a una carpeta "Gecatech – Respaldo" en tu Drive. Conectar es opcional: sin conexión, tus archivos siguen guardados y visibles aquí.</p>
     ${DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI" ? `<p class="err">La conexión con Drive aún no está configurada (falta el ID de cliente de Google).</p>` : (driveConn ? `<p>Conectado como <b>${esc(driveConn.email || "tu cuenta de Google")}</b></p>` : `<p class="muted">No conectado — tus archivos se guardan en el portal; la copia en Drive está desactivada.</p>`)}
-    ${isAdmin ? `<p class="muted">Solo el maestro puede conectar su Drive. Estás viendo el estado de ${esc(teacherObj ? teacherObj.name : "")}.</p>` : (DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI" ? `` : (driveConn ? `<button id="btn-drive-disconnect" class="ghost">Desconectar mi Google Drive</button>` : `<button id="btn-drive-connect" class="gold">Conectar mi Google Drive</button>`))}
+    ${driveCardActionsHtml({ isAdmin, isSelf: selTeacher === me.uid, connected: !!driveConn, configured: DRIVE_CLIENT_ID !== "PONER_CLIENT_ID_DRIVE_AQUI", teacherName: esc(teacherObj ? teacherObj.name : "") })}
     <div id="drive-err" class="err"></div>
   </div>
   ${selCourse ? `<div class="card"><h2>Avisos para este curso</h2>
