@@ -300,14 +300,17 @@ function resetIdleTimer() {
 function enterApp() {
   idleArmed = true;
   resetIdleTimer();
+  // Si el admin restableció su contraseña, se abre "Mi cuenta" y no se
+  // puede salir de ahí hasta cambiarla.
+  if (me.mustChangePassword === true) currentTab = "cuenta";
   $("view-login").classList.add("hidden");
   $("view-app").classList.remove("hidden");
   $("user-chip").innerHTML = esc(me.name) + "<br>" + (me.role === "admin" ? "Administrador" : "Maestro/a");
   const tabs = $("tabs");
   tabs.innerHTML = "";
   const defs = me.role === "admin"
-    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"]]
-    : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"]];
+    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"], ["cuenta", "Mi cuenta"]]
+    : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"], ["cuenta", "Mi cuenta"]];
   defs.forEach(([id, label]) => {
     const b = document.createElement("button");
     b.textContent = label;
@@ -322,6 +325,7 @@ async function renderSection() {
     if (currentTab === "maestros") await renderTeachers();
     else if (currentTab === "cursos") await renderCourses();
     else if (currentTab === "classroom") await renderClassroom();
+    else if (currentTab === "cuenta") await renderAccount();
     else await renderStudents();
   } catch (e) {
     const s = $("section");
@@ -1425,6 +1429,18 @@ function renderSylEditor(courseId) {
   $("syl-close").addEventListener("click", () => { box.innerHTML = ""; });
 }
 
+// Fecha del último cambio de contraseña (Timestamp, número o Date);
+// "nunca" si el maestro nunca la ha cambiado.
+function fmtPassDate(v) {
+  if (!v) return "nunca";
+  let ms = 0;
+  if (typeof v.toMillis === "function") ms = v.toMillis();
+  else if (typeof v === "number") ms = v;
+  else { const d = new Date(v); ms = isNaN(d) ? 0 : d.getTime(); }
+  if (!ms) return "nunca";
+  return new Date(ms).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
+}
+
 // ---------- Maestros (solo admin) ----------
 async function renderTeachers() {
   const s = $("section");
@@ -1433,8 +1449,9 @@ async function renderTeachers() {
   const courseChecks = Object.entries(courses).map(([id, c]) =>
     `<label style="display:inline-block;margin:4px 12px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="new-teacher-course" value="${id}" style="width:auto"> ${esc(c.name)}</label>`).join("");
   s.innerHTML = `
+  <div id="teacher-edit-box"></div>
   <div class="card"><h2>Crear cuenta de maestro</h2>
-    <p class="hint">Solo tú puedes crear cuentas. El maestro entra con su correo y esta contraseña; después puede cambiarla con la opción de restablecer.</p>
+    <p class="hint">Solo tú puedes crear cuentas. El maestro entra con su correo y esta contraseña; después puede cambiarla en su pestaña Mi cuenta.</p>
     <div class="row">
       <div><label>Nombre del maestro/a</label><input id="nt-name" placeholder="Ej. Mónica Tintos"></div>
       <div><label>Correo</label><input id="nt-email" type="email" placeholder="correo@ejemplo.com"></div>
@@ -1446,13 +1463,14 @@ async function renderTeachers() {
     <div id="nt-msg" class="okmsg"></div><div id="nt-err" class="err"></div>
   </div>
   <div class="card"><h2>Maestros registrados</h2>
-    <table><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th></th></tr>
+    <table><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th>Contraseña</th><th></th></tr>
     ${list.map(t => `<tr><td>${esc(t.name)}</td><td>${esc(t.email)}</td>
       <td><span class="badge ${t.role === "admin" ? "admin" : "teacher"}">${t.role === "admin" ? "Admin" : "Maestro/a"}</span></td>
       <td>${(t.courses || []).map(id => esc(courses[id] ? courses[id].name : id)).join(", ")}</td>
       <td>${(t.courses || []).map(id => `<div style="margin-bottom:6px"><small>${esc(courses[id] ? courses[id].name : id)}</small><br><input type="url" data-teacher="${t.uid}" data-course="${id}" data-field="classroomLink" value="${esc((t.classroomLinks || {})[id] || "")}" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></div>`).join("")}</td>
       <td>${t.active === false ? '<span class="badge off">Desactivado</span>' : "Activo"}</td>
-      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""} <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button></td></tr>`).join("")}
+      <td>${t.passwordChangedAt ? "cambiada el " + fmtPassDate(t.passwordChangedAt) : "nunca"}</td>
+      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""} <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button></td></tr>`).join("")}
     </table>
   </div>`;
   $("btn-create-teacher").addEventListener("click", async () => {
@@ -1483,6 +1501,32 @@ async function renderTeachers() {
     const activate = b.getAttribute("data-active") === "1";
     await db.collection("teachers").doc(uid).update({ active: activate });
     renderTeachers();
+  }));
+  const byUid = {};
+  list.forEach(t => { byUid[t.uid] = t; });
+  // Editar los datos de un maestro (nombre, cursos, activo). El correo
+  // no se cambia desde aquí (exige actualizar la cuenta de acceso).
+  s.querySelectorAll("[data-edit-teacher]").forEach(b => b.addEventListener("click", () => openTeacherEdit(b.getAttribute("data-edit-teacher"))));
+  // Restablecer la contraseña de un maestro: el servidor pone una
+  // temporal y se muestra UNA VEZ para pasársela al maestro. El admin
+  // nunca ve la contraseña propia del maestro. No se vuelve a cargar la
+  // tabla después, para no borrar el mensaje con la temporal.
+  s.querySelectorAll("[data-reset-pass]").forEach(b => b.addEventListener("click", async () => {
+    const uid = b.getAttribute("data-reset-pass");
+    const t = byUid[uid];
+    if (!confirm("¿Restablecer la contraseña de " + (t ? t.name : "este maestro") + "? Se le pondrá una contraseña temporal y deberá cambiarla al entrar.")) return;
+    showErr($("nt-err"), ""); showOk($("nt-msg"), "");
+    b.disabled = true;
+    try {
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("resetTeacherPassword");
+      const r = await fn({ uid });
+      const temp = (r.data || {}).tempPassword || "";
+      if (!temp) throw new Error("El servidor no devolvió la contraseña temporal.");
+      showOk($("nt-msg"), "Contraseña temporal para " + (t ? t.name : "") + ": " + temp + " — pásasela al maestro y pídele que la cambie al entrar. No se volverá a mostrar.");
+    } catch (e) {
+      showErr($("nt-err"), "No se pudo restablecer: " + (e.message || e.code || e));
+    } finally { b.disabled = false; }
   }));
   // Guardar los enlaces de Classroom de un maestro (uno por curso que imparte)
   // y propagarlos a las fichas de sus alumnos de cada curso.
@@ -1518,6 +1562,98 @@ async function renderTeachers() {
       showErr($("nt-err"), "No se pudo guardar: " + (e.message || e));
     } finally { b.disabled = false; }
   }));
+}
+
+// Editar un maestro: nombre, cursos y activo. El correo es solo lectura
+// (cambiarlo exige actualizar la cuenta de acceso en Auth). El admin no
+// puede desactivar su propia cuenta.
+async function openTeacherEdit(uid) {
+  const tDoc = await db.collection("teachers").doc(uid).get();
+  if (!tDoc.exists) return;
+  const t = { uid, ...tDoc.data() };
+  const isSelf = uid === me.uid;
+  const box = $("teacher-edit-box");
+  if (!box) return;
+  box.innerHTML = `
+  <div class="card"><h2>Editar maestro: ${esc(t.name)}</h2>
+    <div class="row">
+      <div><label>Nombre</label><input id="et-name" value="${esc(t.name)}"></div>
+      <div><label>Correo (no se puede cambiar)</label><input value="${esc(t.email)}" disabled></div>
+    </div>
+    <label>Cursos que imparte</label>
+    <div>${Object.entries(courses).map(([id, c]) => `<label style="display:inline-block;margin:4px 12px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="edit-teacher-course" value="${id}" ${(t.courses || []).includes(id) ? "checked" : ""} style="width:auto"> ${esc(c.name)}</label>`).join("")}</div>
+    <label><input type="checkbox" id="et-active" ${t.active !== false ? "checked" : ""} ${isSelf ? "disabled" : ""} style="width:auto"> Activo</label>
+    ${isSelf ? `<p class="hint">No puedes desactivar tu propia cuenta.</p>` : ""}
+    <div style="margin-top:14px"><button id="btn-save-teacher" class="gold">Guardar cambios</button> <button id="btn-cancel-teacher" class="ghost">Cancelar</button></div>
+    <div id="et-msg" class="okmsg"></div><div id="et-err" class="err"></div>
+  </div>`;
+  $("btn-cancel-teacher").addEventListener("click", () => { box.innerHTML = ""; });
+  $("btn-save-teacher").addEventListener("click", async () => {
+    const name = $("et-name").value.trim();
+    const selCourses = [...document.querySelectorAll(".edit-teacher-course:checked")].map(x => x.value);
+    const active = isSelf ? true : $("et-active").checked;
+    showErr($("et-err"), ""); showOk($("et-msg"), "");
+    if (!name) { showErr($("et-err"), "Escribe el nombre."); return; }
+    if (!selCourses.length) { showErr($("et-err"), "Elige al menos un curso."); return; }
+    $("btn-save-teacher").disabled = true;
+    try {
+      await db.collection("teachers").doc(uid).update({ name, courses: selCourses, active });
+      renderTeachers();
+    } catch (e) {
+      showErr($("et-err"), "No se pudo guardar: " + (e.message || e));
+    } finally { $("btn-save-teacher").disabled = false; }
+  });
+}
+
+// ---------- Mi cuenta ----------
+// Cambio de contraseña propio: se re-autentica con la contraseña actual
+// y luego se actualiza. La contraseña NUNCA se guarda en Firestore:
+// solo se anota cuándo se cambió (passwordChangedAt) y si el admin pidió
+// que se cambie (mustChangePassword).
+async function renderAccount() {
+  const s = $("section");
+  const must = me.mustChangePassword === true;
+  s.innerHTML = `
+  <div class="card"><h2>Mi cuenta</h2>
+    <p><strong>${esc(me.name)}</strong> · ${esc(me.email)} · ${me.role === "admin" ? "Administrador" : "Maestro/a"}</p>
+    <p class="muted">Último cambio de contraseña: ${fmtPassDate(me.passwordChangedAt)}.</p>
+    ${must ? `<p class="err" style="font-weight:600">Tu contraseña fue restablecida por el administrador. Cámbiala ahora por una contraseña tuya.</p>` : ""}
+  </div>
+  <div class="card"><h2>Cambiar mi contraseña</h2>
+    <p class="hint">Tu contraseña solo la sabes tú: el administrador no puede verla, solo puede restablecerla si la olvidas.</p>
+    <div class="row">
+      <div><label>Contraseña actual</label><input id="pw-cur" type="password" autocomplete="current-password"></div>
+      <div><label>Contraseña nueva</label><input id="pw-new" type="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres"></div>
+      <div><label>Repite la contraseña nueva</label><input id="pw-new2" type="password" autocomplete="new-password"></div>
+    </div>
+    <div style="margin-top:14px"><button id="btn-change-pass" class="gold">Cambiar contraseña</button></div>
+    <div id="pw-msg" class="okmsg"></div><div id="pw-err" class="err"></div>
+  </div>`;
+  $("btn-change-pass").addEventListener("click", async () => {
+    const cur = $("pw-cur").value;
+    const nw = $("pw-new").value;
+    const nw2 = $("pw-new2").value;
+    showErr($("pw-err"), ""); showOk($("pw-msg"), "");
+    if (!cur || nw.length < 6) { showErr($("pw-err"), "Escribe tu contraseña actual y una nueva de mínimo 6 caracteres."); return; }
+    if (nw !== nw2) { showErr($("pw-err"), "La contraseña nueva y su repetición no coinciden."); return; }
+    $("btn-change-pass").disabled = true;
+    try {
+      const cred = firebase.auth.EmailAuthProvider.credential(me.email, cur);
+      await auth.currentUser.reauthenticateWithCredential(cred);
+      await auth.currentUser.updatePassword(nw);
+      await db.collection("teachers").doc(me.uid).update({ passwordChangedAt: firebase.firestore.FieldValue.serverTimestamp(), mustChangePassword: false });
+      me.passwordChangedAt = new Date();
+      me.mustChangePassword = false;
+      showOk($("pw-msg"), "Contraseña cambiada.");
+      $("pw-cur").value = ""; $("pw-new").value = ""; $("pw-new2").value = "";
+      renderAccount();
+    } catch (e) {
+      const code = e.code || "";
+      showErr($("pw-err"), code === "auth/wrong-password" || code === "auth/invalid-credential"
+        ? "La contraseña actual no es correcta."
+        : "No se pudo cambiar: " + (e.message || code));
+    } finally { $("btn-change-pass").disabled = false; }
+  });
 }
 </script>
 
@@ -1618,7 +1754,7 @@ async function renderStudents() {
   diplomasCatalog = await fetchDiplomas();
   const editingSt = editingStudentId ? students.find(x => x.id === editingStudentId) : null;
   const flat = flattenSyllabus(course.syllabus || []);
-  const progColSpan = flat.length ? 9 : 8;
+  const progColSpan = (flat.length ? 9 : 8) + (isAdmin ? 1 : 0);
   // Al editar: la clase actual del alumno; al dar de alta: la clase actual
   // del curso (el maestro la cambia si el alumno va en otra).
   const formClassIdx = editingSt
@@ -1640,14 +1776,16 @@ async function renderStudents() {
       <button id="btn-toggle-cols" class="ghost">${showAllCols ? "Ver tabla compacta" : "Ver tabla completa"}</button>
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
-    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th>${flat.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th><th></th></tr>
+    <div id="st-pass-msg" class="okmsg"></div><div id="st-pass-err" class="err"></div>
+    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th>${flat.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th>${isAdmin ? "<th>Contraseña</th>" : ""}<th></th></tr>
     ${students.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td>
       ${flat.length ? `<td>${studentProgressCell(st, flat)}</td>` : ""}
       <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
       <td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
-      <td><button class="small" data-edit="${st.id}">Editar</button></td></tr>
+      ${isAdmin ? `<td>${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</td>` : ""}
+      <td><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""}</td></tr>
       <tr id="docs-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div id="docs-box-${st.id}"></div></td></tr>
       <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>}`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
@@ -1812,6 +1950,30 @@ async function renderStudents() {
       await db.collection("students").doc(id).update({ authUid: firebase.firestore.FieldValue.delete() });
       renderStudents();
     } catch (e) { showErr($("exp-err"), "No se pudo quitar el acceso: " + (e.message || e)); }
+  }));
+  // Restablecer la contraseña de un alumno (solo admin): el servidor pone
+  // una temporal y se muestra UNA VEZ para pasársela al alumno. El admin
+  // nunca ve la contraseña propia del alumno. Solo se ofrece si el alumno
+  // tiene cuenta de acceso. No se vuelve a cargar la tabla después, para
+  // no borrar el mensaje con la temporal.
+  const studentsById = {};
+  students.forEach(st => { studentsById[st.id] = st; });
+  s.querySelectorAll("[data-reset-student-pass]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-reset-student-pass");
+    const st = studentsById[id];
+    if (!confirm("¿Restablecer la contraseña de " + (st ? st.name : "este alumno") + "? Se le pondrá una contraseña temporal y deberá cambiarla al entrar.")) return;
+    showErr($("st-pass-err"), ""); showOk($("st-pass-msg"), "");
+    b.disabled = true;
+    try {
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("resetStudentPassword");
+      const r = await fn({ studentId: id });
+      const temp = (r.data || {}).tempPassword || "";
+      if (!temp) throw new Error("El servidor no devolvió la contraseña temporal.");
+      showOk($("st-pass-msg"), "Contraseña temporal para " + (st ? st.name : "") + ": " + temp + " — pásasela al alumno y pídele que la cambie al entrar. No se volverá a mostrar.");
+    } catch (e) {
+      showErr($("st-pass-err"), "No se pudo restablecer: " + (e.message || e.code || e));
+    } finally { b.disabled = false; }
   }));
   s.querySelectorAll("[data-prog-student]").forEach(sel => sel.addEventListener("change", async () => {
     const id = sel.getAttribute("data-prog-student");
