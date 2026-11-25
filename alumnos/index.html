@@ -270,6 +270,11 @@ function teacherContact(course, st) {
   if (name && TEACHER_CONTACTS[name]) return { name, ...TEACHER_CONTACTS[name] };
   return null;
 }
+// Enlace de Meet de la clase del alumno (denormalizado en su ficha como
+// classMeetUrl). "" si su clase aún no tiene enlace: el botón no se muestra.
+function classMeetUrlOf(st) {
+  return (st && st.classMeetUrl ? String(st.classMeetUrl) : "").trim();
+}
 async function enterApp() {
   $("view-login").classList.add("hidden");
   $("view-app").classList.remove("hidden");
@@ -323,6 +328,8 @@ async function enterApp() {
     const waText = "Hola, soy alumno/a de Gecatech del curso " + (course.name || "") + ".";
     // Enlace de Classroom: 1) el de su propio maestro; 2) el del curso como respaldo.
     const classroomUrl = (st.teacherClassroomUrl || "").trim() || (course.classroomUrl || "").trim();
+    // Enlace de Meet de su clase (solo si la clase ya tiene uno).
+    const meetUrl = classMeetUrlOf(st);
     // Grabaciones del curso (courses/{id}.recordings).
     // El alumno solo ve las grabaciones desde su fecha de ingreso en este
     // curso: las de clases anteriores a su ingreso no se le muestran.
@@ -357,6 +364,7 @@ async function enterApp() {
       <p>${teacherPhotoHtml(contact ? contact.photoUrl : "", teacherLabel)}<strong>Maestro/a:</strong> ${esc(teacherLabel)}</p>
       ${wa ? `<p><a class="btn gold" target="_blank" rel="noopener" href="https://wa.me/${wa.wa}?text=${encodeURIComponent(waText)}">WhatsApp con ${esc(contact ? contact.label : "informes generales")}</a> <span class="muted">${esc(wa.phone || "")}</span></p>` : ""}
       ${classroomUrl ? `<p><a class="btn" target="_blank" rel="noopener" href="${esc(classroomUrl)}">Entrar a mi Classroom</a></p>` : ""}
+      ${meetUrl ? `<p><a class="btn gold" target="_blank" rel="noopener" href="${esc(meetUrl)}">Entrar a mi clase</a></p>` : ""}
       ${recs.length ? `<div style="margin-top:10px"><h3>Grabaciones</h3>${recs.map(r => `<p><a target="_blank" rel="noopener" href="${esc(r.url || "")}">${esc(r.title || "Grabación")}</a>${r.date ? ` <span class="muted">${fmtRecDate(r.date)}</span>` : ""}</p>`).join("")}</div>` : ""}
       ${avHtml}
       ${dipHtml}

@@ -153,6 +153,19 @@ const CLASSROOM_SCOPES = [
 const DRIVE_CLIENT_ID = "874181432740-eik2ivcmps6s0ue06meifu966bjjks1m.apps.googleusercontent.com";
 // Alcance mínimo: solo archivos que crea la propia app (drive.file).
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+
+// ---------- Calendario de Google y enlaces fijos de Meet ----------
+// Cada maestra conecta su calendario de Google (una sola vez) para que
+// el portal genere el enlace fijo de Meet de cada clase directamente en
+// SU calendario (nunca en el del administrador). El cliente de OAuth es
+// OTRO distinto al de Classroom y al de Drive: se crea en Google Cloud
+// Console solo para Calendario (ver CALENDAR_SETUP.md).
+// TODO: crear el cliente OAuth "Portal Maestros – Calendario" en la
+// consola y poner aquí su ID de cliente. Mientras esté vacío, la tarjeta
+// de Mi cuenta muestra que falta la configuración y nada se bloquea.
+const CALENDAR_CLIENT_ID = "874181432740-5ah6vsff4hpvo9n53s724rker6str2mo.apps.googleusercontent.com";
+// Alcance mínimo: crear y ver eventos en el calendario de la maestra.
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
@@ -322,8 +335,8 @@ function enterApp() {
   const tabs = $("tabs");
   tabs.innerHTML = "";
   const defs = me.role === "admin"
-    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"], ["cuenta", "Mi cuenta"]]
-    : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"], ["cuenta", "Mi cuenta"]];
+    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]]
+    : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]];
   defs.forEach(([id, label]) => {
     const b = document.createElement("button");
     b.textContent = label;
@@ -338,6 +351,7 @@ async function renderSection() {
     if (currentTab === "maestros") await renderTeachers();
     else if (currentTab === "cursos") await renderCourses();
     else if (currentTab === "classroom") await renderClassroom();
+    else if (currentTab === "calendario") await renderCalendar();
     else if (currentTab === "cuenta") await renderAccount();
     else await renderStudents();
   } catch (e) {
@@ -604,6 +618,72 @@ async function disconnectDrive() {
     await fn({});
     driveConn = null;
     renderStudents();
+  } catch (e) {
+    if (errEl) showErr(errEl, "No se pudo desconectar: " + (e.message || e));
+  }
+}
+
+// ---------- Calendario de Google y Meet ----------
+let calendarCodeClient = null;
+let calendarConn = null; // {email, connectedAt} de la maestra (o null)
+
+// Lee la conexión de calendario guardada (la lee el portal porque las
+// reglas permiten leerla a su dueña y al admin; el token nunca sale del
+// servidor). Igual que fetchDriveConnection.
+async function fetchCalendarConnection(teacherUid) {
+  if (!teacherUid) return null;
+  try {
+    const d = await db.collection("calendarConnections").doc(teacherUid).get();
+    return d.exists ? d.data() : null;
+  } catch (e) { return null; }
+}
+
+async function connectCalendar() {
+  const errEl = $("cal-err");
+  if (!CALENDAR_CLIENT_ID) {
+    if (errEl) showErr(errEl, "La conexión con el calendario aún no está configurada (falta el ID de cliente de Google).");
+    return;
+  }
+  try {
+    await loadGsiScript();
+    await loadFunctionsScript();
+    if (!calendarCodeClient) {
+      calendarCodeClient = google.accounts.oauth2.initCodeClient({
+        client_id: CALENDAR_CLIENT_ID,
+        scope: CALENDAR_SCOPE,
+        ux_mode: "popup",
+        redirect_uri: "postmessage",
+        prompt: "consent",
+        callback: async (resp) => {
+          if (resp && resp.code) {
+            try {
+              const fn = firebase.functions().httpsCallable("exchangeCalendarCode");
+              const r = await fn({ code: resp.code });
+              calendarConn = { email: r.data.email, connectedAt: new Date() };
+              renderAccount();
+            } catch (e) {
+              if (errEl) showErr(errEl, "No se pudo conectar tu calendario: " + (e.message || e));
+            }
+          } else if (errEl) {
+            showErr(errEl, "No se completó la conexión con Google. Intenta de nuevo.");
+          }
+        }
+      });
+    }
+    calendarCodeClient.requestCode();
+  } catch (e) {
+    if (errEl) showErr(errEl, "No se pudo conectar: " + (e.message || e));
+  }
+}
+
+async function disconnectCalendar() {
+  const errEl = $("cal-err");
+  try {
+    await loadFunctionsScript();
+    const fn = firebase.functions().httpsCallable("disconnectCalendar");
+    await fn({});
+    calendarConn = null;
+    renderAccount();
   } catch (e) {
     if (errEl) showErr(errEl, "No se pudo desconectar: " + (e.message || e));
   }
@@ -882,13 +962,31 @@ function crRenderMaterials(courseId) {
   }).join("") : `<p class="muted">No hay materiales publicados todavía.</p>`);
 }
 
+// URL para listar las tareas de un curso: incluye PUBLISHED y DRAFT.
+// Sin courseWorkStates, la API de Classroom solo devuelve las
+// publicadas y las programadas o en borrador no aparecen en la lista.
+function crCourseWorkListUrl(courseId) {
+  return "/courses/" + encodeURIComponent(courseId) + "/courseWork?pageSize=50&courseWorkStates=PUBLISHED&courseWorkStates=DRAFT";
+}
+// Etiqueta de una tarea en borrador: "Programada para <fecha y hora>"
+// si tiene hora programada, "Borrador" si no. "" si está publicada.
+function crDraftLabel(w) {
+  if (!w || w.state !== "DRAFT") return "";
+  if (w.scheduledTime) return "Programada para " + fmtDateTimeEs(w.scheduledTime);
+  return "Borrador";
+}
+
 // Una tarea dentro de la lista: título, fecha de entrega con aviso de
 // vencida o vence pronto, conteo y botón "Ver quiénes".
 function crTaskHtml(courseId, w) {
   const due = w.dueDate ? fmtDueDateEs(w.dueDate, w.dueTime) : "";
-  const st = dueStatus(w.dueDate, w.dueTime);
+  const isDraft = w.state === "DRAFT";
+  // Una tarea en borrador no está publicada: no lleva aviso de vencida.
+  const st = isDraft ? "" : dueStatus(w.dueDate, w.dueTime);
   const badge = st === "vencida" ? ` <span class="badge off">Vencida</span>` : (st === "pronto" ? ` <span class="badge admin">Vence pronto</span>` : "");
-  return `<div class="docline"><span><b>${esc(w.title || "Tarea")}</b>${due ? ` <span class="muted">· Entrega: ${esc(due)}</span>` : ""}${badge}</span>
+  const draft = crDraftLabel(w);
+  const draftBadge = draft ? ` <span class="badge admin">${esc(draft)}</span>` : "";
+  return `<div class="docline"><span><b>${esc(w.title || "Tarea")}</b>${due ? ` <span class="muted">· Entrega: ${esc(due)}</span>` : ""}${badge}${draftBadge}</span>
     <span class="muted" id="cr-count-${esc(w.id)}">Contando entregas…</span></div>
     <div><button class="small ghost" id="cr-who-${esc(w.id)}">Ver quiénes</button>
     <div id="cr-names-${esc(w.id)}" class="muted hidden">Cargando nombres…</div></div>`;
@@ -948,7 +1046,7 @@ async function showCourseWork(courseId) {
   if (!box) return;
   box.innerHTML = `<p class="muted">Cargando tareas…</p>`;
   try {
-    const data = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork?pageSize=50");
+    const data = await classroomFetch(crCourseWorkListUrl(courseId));
     const works = data.courseWork || [];
     // Lista de alumnos (nombre y foto por userId) y maestros del curso.
     const roster = {};
@@ -1519,6 +1617,57 @@ function studentProgressCell(st, calendar) {
   return `<select data-prog-student="${st.id}" style="max-width:220px"><option value="">Sin asignar</option>${weekOptionsHtml(calendar, cur)}</select>` +
     `<div id="prog-text-${st.id}" style="margin-top:6px">${progressStudentHtml(calendar, cur)}</div>`;
 }
+// ---------- Calendario de la escuela ----------
+// Vista semanal con todas las clases: curso, maestro, horario y enlace
+// de Meet. El administrador ve todas las clases; cada maestra solo las
+// suyas. NO muestra el avance del curso (semana/progreso): eso solo se
+// ve en Mis alumnos / Mis clases, nunca en una vista general.
+const CAL_DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+const CAL_DAY_NUM = [1, 2, 3, 4, 5, 6, 0]; // Lunes..Domingo en 0=Dom..6=Sáb
+function calendarClassesFor(list, me) {
+  // Clases visibles en el calendario: todas para el admin, solo las
+  // propias para cada maestra. Se prueba en Node.
+  if (!list) return [];
+  if (me && me.role === "admin") return list.filter(c => c.active !== false);
+  return list.filter(c => c.active !== false && me && c.teacherId === me.uid);
+}
+async function renderCalendar() {
+  const s = $("section");
+  const isAdmin = me.role === "admin";
+  s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2><p class="muted">Cargando clases…</p></div>`;
+  let all = [];
+  let teacherNames = {};
+  try {
+    if (isAdmin) {
+      const snap = await db.collection("classes").get();
+      snap.forEach(d => all.push({ id: d.id, ...d.data() }));
+      (await listTeachers()).forEach(t => { teacherNames[t.uid] = t.name; });
+    } else {
+      all = await fetchClasses(me.uid);
+      teacherNames[me.uid] = me.name;
+    }
+  } catch (e) {
+    s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2><p class="err">No se pudieron cargar las clases: ${esc(e.message || e)}</p></div>`;
+    return;
+  }
+  const shown = calendarClassesFor(all, me);
+  const byDay = CAL_DAY_NUM.map(() => []);
+  shown.forEach(c => (c.days || []).forEach(d => {
+    const idx = CAL_DAY_NUM.indexOf(d);
+    if (idx >= 0) byDay[idx].push(c);
+  }));
+  byDay.forEach(list => list.sort((a, b) => String(a.startTime || "").localeCompare(String(b.startTime || ""))));
+  const colHtml = byDay.map((list, i) => `<td style="vertical-align:top;width:14%"><strong>${CAL_DAYS[i]}</strong>${list.length ? list.map(c => {
+    const course = courses[c.courseId] || {};
+    const meet = (c.meetUrl || "").trim();
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:8px;margin-top:8px"><strong>${esc(course.name || c.courseId)}</strong><br><span class="muted">${isAdmin ? esc(teacherNames[c.teacherId] || "") + "<br>" : ""}${esc(classScheduleText(c.days, c.startTime, c.endTime))}</span><br>${meet ? `<a href="${esc(meet)}" target="_blank" rel="noopener">Entrar a Meet</a>` : `<span class="muted">Sin enlace de Meet</span>`}</div>`;
+  }).join("") : `<p class="muted">—</p>`}</td>`).join("");
+  s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2>
+    <p class="hint">Todas las clases de la semana con su horario y su enlace de Meet.${isAdmin ? " Ves las clases de todas las maestras." : ""}</p>
+    ${shown.length ? `<div class="table-scroll"><table class="students"><tr>${CAL_DAYS.map(d => `<th>${d}</th>`).join("")}</tr><tr>${colHtml}</tr></table></div>` : `<p class="muted">Aún no hay clases registradas. Regístralas en Mis clases.</p>`}
+  </div>`;
+}
+
 async function renderCourses() {
   const s = $("section");
   const diplomas = await fetchDiplomas();
@@ -1973,6 +2122,7 @@ async function openTeacherEdit(uid) {
 async function renderAccount() {
   const s = $("section");
   const must = me.mustChangePassword === true;
+  calendarConn = await fetchCalendarConnection(me.uid);
   s.innerHTML = `
   <div class="card"><h2>Mi cuenta</h2>
     <p><strong>${esc(me.name)}</strong> · ${esc(me.email)} · ${me.role === "admin" ? "Administrador" : "Maestro/a"}</p>
@@ -1992,6 +2142,12 @@ async function renderAccount() {
     </div>
     <div style="margin-top:14px"><button id="btn-save-wa" class="gold">Guardar WhatsApp</button></div>
     <div id="wa-msg" class="okmsg"></div><div id="wa-err" class="err"></div>
+  </div>
+  <div class="card"><h2>Mi calendario de Google</h2>
+    <p class="hint">Conecta tu calendario de Google para que el portal genere el enlace fijo de Meet de cada una de tus clases directamente en tu calendario. Tus alumnos entran a su clase con ese enlace desde su portal.</p>
+    ${!CALENDAR_CLIENT_ID ? `<p class="err">La conexión con el calendario aún no está configurada (falta el ID de cliente de Google).</p>` : (calendarConn ? `<p>Conectado como <b>${esc(calendarConn.email || "tu cuenta de Google")}</b></p>` : `<p class="muted">No conectado — sin conexión, el enlace de Meet de tus clases se escribe a mano en Mis clases.</p>`)}
+    ${CALENDAR_CLIENT_ID ? (calendarConn ? `<button id="btn-cal-disconnect" class="ghost">Desconectar mi calendario de Google</button>` : `<button id="btn-cal-connect" class="gold">Conectar mi calendario de Google</button>`) : ``}
+    <div id="cal-err" class="err"></div>
   </div>
   <div class="card"><h2>Cambiar mi contraseña</h2>
     <p class="hint">Tu contraseña solo la sabes tú: el administrador no puede verla, solo puede restablecerla si la olvidas.</p>
@@ -2063,6 +2219,11 @@ async function renderAccount() {
         : "No se pudo cambiar: " + (e.message || code));
     } finally { $("btn-change-pass").disabled = false; }
   });
+  // Mi calendario de Google: conectar y desconectar (tarjeta de arriba).
+  const btnCalConnect = $("btn-cal-connect");
+  if (btnCalConnect) btnCalConnect.addEventListener("click", connectCalendar);
+  const btnCalDisconnect = $("btn-cal-disconnect");
+  if (btnCalDisconnect) btnCalDisconnect.addEventListener("click", disconnectCalendar);
 }
 </script>
 
@@ -2255,6 +2416,27 @@ async function propagateClassLabel(classId, label) {
   snap.forEach(d => batch.update(d.ref, { classLabel: label }));
   await batch.commit();
 }
+async function propagateClassMeetUrl(classId, url, list) {
+  // Guarda el enlace de Meet en las fichas de los alumnos de una clase
+  // (campo classMeetUrl): los que tienen classId de esa clase, y los
+  // alumnos viejos sin classId cuando esta clase es la clase por defecto
+  // de su (maestro, curso). Igual que propagateClassLabel. Sin url, lo
+  // quita de las fichas.
+  const cl = (list || []).find(c => c.id === classId);
+  if (!cl) return;
+  const snap = await db.collection("students").where("teacherId", "==", cl.teacherId).where("courseId", "==", cl.courseId).get();
+  if (snap.empty) return;
+  const def = defaultClassFor(list, cl.courseId);
+  const batch = db.batch();
+  snap.forEach(d => {
+    const st = d.data();
+    const isMine = st.classId === classId || (!st.classId && def && def.id === classId);
+    if (!isMine) return;
+    if (url) batch.update(d.ref, { classMeetUrl: url });
+    else batch.update(d.ref, { classMeetUrl: firebase.firestore.FieldValue.delete() });
+  });
+  await batch.commit();
+}
 // Gestor de clases: lista + formulario de registro/edición. Se usa en la
 // pestaña Alumnos (solo el curso seleccionado) y en la pestaña Maestros
 // (admin: todas las clases de un maestro). ctx: {scope, courseId, students
@@ -2274,7 +2456,13 @@ function classManagerHtml(teacher, list, ctx) {
     const weekSel = calendar.length
       ? `<div style="margin-top:6px"><label style="font-weight:normal">Semana actual de esta clase</label><select data-class-week="${c.id}" style="max-width:260px"><option value="">Sin definir</option>${weekOptionsHtml(calendar, ownWk)}</select>${ownWk === null && effWk !== null ? ` <span class="muted">(hereda la semana del curso)</span>` : ""}</div>`
       : "";
-    return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(c.label || classFullLabel(c.courseId, c.days, c.startTime, c.endTime))}</strong>${count !== null ? ` <span class="muted">· ${count} alumno${count === 1 ? "" : "s"}</span>` : ""}<br><span class="muted">${effWk !== null && calendar.length ? esc("Va en: Semana " + (effWk + 1) + " de " + calendar.length) : "Semana actual sin definir"}</span>${weekSel}</div><div><button class="small ghost" data-edit-class="${c.id}">Editar</button> <button class="small ghost" data-del-class="${c.id}" style="color:var(--err)">Eliminar</button></div></div>`;
+    // Enlace de Meet de la clase: se escribe a mano o se genera fijo en el
+    // calendario de la maestra. El enlace viaja a las fichas de sus alumnos.
+    const meet = (c.meetUrl || "").trim();
+    const meetHtml = meet
+      ? `<div style="margin-top:6px"><span class="muted">Meet:</span> <a href="${esc(meet)}" target="_blank" rel="noopener">Entrar a la clase</a> <button class="small ghost" data-meet-copy="${esc(meet)}">Copiar enlace</button> <button class="small ghost" data-meet-regen="${c.id}">Generar uno nuevo</button></div>`
+      : `<div style="margin-top:6px"><label style="font-weight:normal">Enlace de Meet</label><div class="row"><input type="url" data-meet-input="${c.id}" placeholder="Pega el enlace de Meet de esta clase…" style="flex:1"><button class="small" data-meet-save="${c.id}">Guardar enlace</button><button class="small gold" data-meet-generate="${c.id}">Generar enlace fijo</button></div><span class="muted">O genera el enlace fijo en tu calendario de Google (conéctalo en Mi cuenta).</span></div>`;
+    return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(c.label || classFullLabel(c.courseId, c.days, c.startTime, c.endTime))}</strong>${count !== null ? ` <span class="muted">· ${count} alumno${count === 1 ? "" : "s"}</span>` : ""}<br><span class="muted">${effWk !== null && calendar.length ? esc("Va en: Semana " + (effWk + 1) + " de " + calendar.length) : "Semana actual sin definir"}</span>${weekSel}${meetHtml}</div><div><button class="small ghost" data-edit-class="${c.id}">Editar</button> <button class="small ghost" data-del-class="${c.id}" style="color:var(--err)">Eliminar</button></div></div>`;
   }).join("");
   const dayChecks = [1, 2, 3, 4, 5, 6, 0].map(d => `<label style="display:inline-block;margin:4px 10px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="cls-day" value="${d}" style="width:auto"> ${DAYS_ES[d]}</label>`).join("");
   return `
@@ -2331,6 +2519,51 @@ function bindClassManager(box, teacher, list, ctx) {
       await ctx.onChanged();
       const m = document.querySelector("#cls-msg"); if (m) showOk(m, "Clase eliminada.");
     } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo eliminar: " + (e.message || e)); }
+  }));
+  // Enlace de Meet: copiar, guardar a mano y generar el fijo en el
+  // calendario de la maestra (con su permiso de Google).
+  box.querySelectorAll("[data-meet-copy]").forEach(b => b.addEventListener("click", async () => {
+    const url = b.getAttribute("data-meet-copy") || "";
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(url);
+      else throw new Error("sin portapapeles");
+      showOk(box.querySelector("#cls-msg"), "Enlace copiado.");
+    } catch (e) {
+      window.prompt("Copia el enlace de Meet:", url);
+    }
+  }));
+  box.querySelectorAll("[data-meet-save]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-meet-save");
+    const input = box.querySelector(`[data-meet-input="${id}"]`);
+    const url = input ? input.value.trim() : "";
+    showErr(box.querySelector("#cls-err"), ""); showOk(box.querySelector("#cls-msg"), "");
+    if (!/^https:\/\/meet\.google\.com\//i.test(url)) { showErr(box.querySelector("#cls-err"), "Pega un enlace de Meet válido (https://meet.google.com/…)."); return; }
+    b.disabled = true;
+    try {
+      await db.collection("classes").doc(id).update({ meetUrl: url });
+      await propagateClassMeetUrl(id, url, list);
+      await ctx.onChanged();
+      const m = document.querySelector("#cls-msg"); if (m) showOk(m, "Enlace de Meet guardado.");
+    } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo guardar el enlace: " + (e.message || e)); }
+    finally { b.disabled = false; }
+  }));
+  box.querySelectorAll("[data-meet-generate], [data-meet-regen]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-meet-generate") || b.getAttribute("data-meet-regen");
+    const cl = (list || []).find(x => x.id === id);
+    const force = !!(cl && (cl.meetUrl || "").trim());
+    if (force && !confirm("Esta clase ya tiene un enlace de Meet. ¿Generar uno nuevo? El enlace anterior dejará de ser el de la clase.")) return;
+    showErr(box.querySelector("#cls-err"), ""); showOk(box.querySelector("#cls-msg"), "");
+    b.disabled = true;
+    try {
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("createClassMeetEvent");
+      const r = await fn({ classId: id, force });
+      const url = (r.data && r.data.meetUrl) || "";
+      await ctx.onChanged();
+      const m = document.querySelector("#cls-msg");
+      if (m) showOk(m, r.data && r.data.existing ? "Esta clase ya tenía su enlace de Meet." : "Enlace de Meet generado: " + url);
+    } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo generar el enlace: " + (e.message || e)); }
+    finally { b.disabled = false; }
   }));
   if (saveBtn) saveBtn.addEventListener("click", async () => {
     const courseId = courseSel ? courseSel.value : "";
@@ -2461,11 +2694,11 @@ async function renderStudents() {
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td><td>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</td>
       ${calendar.length ? `<td>${studentProgressCell(st, calendar)}</td>` : ""}
       <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
-      <td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
+      <td>${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
       ${isAdmin ? `<td>${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</td>` : ""}
       <td><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""}</td></tr>
       <tr id="docs-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div id="docs-box-${st.id}"></div></td></tr>
-      <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p></td></tr>`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
+      <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></td></tr>`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
   </div>
   ${classTeacher ? `<div id="classes-card">${classManagerHtml(classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students })}</div>` : ""}
@@ -2641,11 +2874,36 @@ async function renderStudents() {
       showErr($("acct-err-" + id), "No se pudo crear: " + (e.code === "auth/email-already-in-use" ? "ese correo ya tiene cuenta." : (e.message || e.code)));
     } finally { b.disabled = false; }
   }));
+  // Vincular una cuenta que YA EXISTE a la ficha del alumno (por
+  // ejemplo, una maestra que también es alumna: su correo ya tiene
+  // cuenta y "Crear cuenta" falla). El servidor busca la cuenta por
+  // correo y la vincula sin crear otra ni cambiar su contraseña.
+  s.querySelectorAll("[data-link-account]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-link-account");
+    const email = $("link-email-" + id).value.trim();
+    showErr($("link-err-" + id), ""); showOk($("link-msg-" + id), "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showErr($("link-err-" + id), "Escribe un correo válido."); return; }
+    b.disabled = true;
+    try {
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("linkStudentAccount");
+      const r = await fn({ studentId: id, email });
+      const d = r.data || {};
+      let msg = "Cuenta vinculada: " + (d.email || email) + ".";
+      if (d.isTeacher) msg += " Esta cuenta también es de maestra; podrá entrar a los dos portales con la misma contraseña.";
+      showOk($("link-msg-" + id), msg);
+      // La tabla se vuelve a cargar con un poco de retraso para que el
+      // mensaje de éxito se alcance a leer (el recargado borra la fila).
+      setTimeout(renderStudents, 2500);
+    } catch (e) {
+      showErr($("link-err-" + id), "No se pudo vincular: " + (e.message || e.code || e));
+    } finally { b.disabled = false; }
+  }));
   s.querySelectorAll("[data-unlink]").forEach(b => b.addEventListener("click", async () => {
     const id = b.getAttribute("data-unlink");
     if (!confirm("¿Quitar el acceso de este alumno al Portal Alumnos? Su cuenta de acceso quedará sin vincular.")) return;
     try {
-      await db.collection("students").doc(id).update({ authUid: firebase.firestore.FieldValue.delete() });
+      await db.collection("students").doc(id).update({ authUid: firebase.firestore.FieldValue.delete(), accountEmail: firebase.firestore.FieldValue.delete(), linkedAt: firebase.firestore.FieldValue.delete(), linkedBy: firebase.firestore.FieldValue.delete() });
       renderStudents();
     } catch (e) { showErr($("exp-err"), "No se pudo quitar el acceso: " + (e.message || e)); }
   }));
@@ -2716,7 +2974,15 @@ async function renderStudents() {
       const stClassSel = $("st-class");
       const classVal = stClassSel ? stClassSel.value : null; // null = este curso no tiene temario
       const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
-      if (classDoc) { data.classId = classDoc.id; data.classLabel = classScheduleText(classDoc.days, classDoc.startTime, classDoc.endTime); }
+      if (classDoc) {
+        data.classId = classDoc.id;
+        data.classLabel = classScheduleText(classDoc.days, classDoc.startTime, classDoc.endTime);
+        // El enlace de Meet de la clase viaja denormalizado en la ficha
+        // (classMeetUrl), igual que classLabel: es lo que ve el alumno en
+        // su portal. Si la clase nueva no tiene enlace, se quita el viejo.
+        if ((classDoc.meetUrl || "").trim()) data.classMeetUrl = classDoc.meetUrl.trim();
+        else if (editingStudentId) data.classMeetUrl = firebase.firestore.FieldValue.delete();
+      }
       if (classVal !== null && classVal !== "") data.currentClass = { week: parseInt(classVal, 10) };
       if (editingStudentId) {
         const upd = { ...data };
