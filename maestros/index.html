@@ -424,17 +424,52 @@ async function showCourseWork(courseId) {
     const data = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork?pageSize=50");
     const works = data.courseWork || [];
     if (!works.length) { box.innerHTML = `<p class="muted">Esta clase no tiene tareas todavía.</p>`; return; }
+    // Lista de alumnos del curso (nombre por userId) para mostrar quién entregó.
+    let roster = null;
+    try {
+      const st = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/students?pageSize=100");
+      roster = {};
+      (st.students || []).forEach(s => {
+        const nm = (s.profile && s.profile.name && s.profile.name.fullName) || s.userId;
+        roster[s.userId] = nm;
+      });
+    } catch (e) { roster = null; }
+    const nameOf = (uid) => (roster && roster[uid]) || uid;
     box.innerHTML = works.map(w => `<div class="docline"><span><b>${esc(w.title || "Tarea")}</b>${w.dueDate ? ` <span class="muted">· Entrega: ${esc(fmtDueDate(w.dueDate, w.dueTime))}</span>` : ""}</span>
-      <span class="muted" id="cr-count-${esc(w.id)}">Contando entregas…</span></div>`).join("");
+      <span class="muted" id="cr-count-${esc(w.id)}">Contando entregas…</span></div>
+      <div><button class="small ghost" id="cr-who-${esc(w.id)}">Ver quiénes</button>
+      <div id="cr-names-${esc(w.id)}" class="muted hidden">Cargando nombres…</div></div>`).join("");
+    works.forEach((w) => {
+      const btn = $("cr-who-" + w.id);
+      const namesBox = $("cr-names-" + w.id);
+      if (btn && namesBox) btn.addEventListener("click", () => {
+        const show = namesBox.classList.contains("hidden");
+        namesBox.classList.toggle("hidden", !show);
+        btn.textContent = show ? "Ocultar" : "Ver quiénes";
+      });
+    });
     works.forEach(async (w) => {
       const el = $("cr-count-" + w.id);
+      const namesBox = $("cr-names-" + w.id);
       try {
         const subs = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(w.id) + "/studentSubmissions?pageSize=100");
         const list = subs.studentSubmissions || [];
         // Entregada = el alumno la mandó (TURNED_IN, RETURNED o REJECTED); pendiente = NEW o CREATED.
-        const turned = list.filter(x => x.state === "TURNED_IN" || x.state === "RETURNED" || x.state === "REJECTED").length;
+        const isTurned = (x) => x.state === "TURNED_IN" || x.state === "RETURNED" || x.state === "REJECTED";
+        const turned = list.filter(isTurned).length;
         if (el) el.textContent = "Entregadas " + turned + " de " + list.length;
-      } catch (e) { if (el) el.textContent = "No se pudo contar las entregas."; }
+        if (namesBox) {
+          if (!roster) { namesBox.textContent = "No se pudieron cargar los nombres."; }
+          else {
+            const done = list.filter(isTurned).map(x => nameOf(x.userId) + (x.state === "REJECTED" ? " (devuelta)" : "")).sort((a, b) => a.localeCompare(b, "es"));
+            const pend = list.filter(x => !isTurned(x)).map(x => nameOf(x.userId)).sort((a, b) => a.localeCompare(b, "es"));
+            namesBox.innerHTML = `<b>Entregaron (${done.length}):</b> ${done.length ? esc(done.join(", ")) : "nadie todavía."}<br><b>Faltan (${pend.length}):</b> ${pend.length ? esc(pend.join(", ")) : "nadie."}`;
+          }
+        }
+      } catch (e) {
+        if (el) el.textContent = "No se pudo contar las entregas.";
+        if (namesBox) namesBox.textContent = "No se pudieron cargar los nombres.";
+      }
     });
   } catch (e) {
     box.innerHTML = `<p class="err">${esc(e.message || "No se pudieron cargar las tareas.")}</p>`;
@@ -480,7 +515,7 @@ async function renderClassroom() {
   }
   s.innerHTML = `
   <div class="card"><h2>Classroom</h2>
-    <p class="hint">Tus clases de Google Classroom. Toca "Ver tareas" para ver el trabajo de cada clase y cuántos alumnos entregaron.</p>
+    <p class="hint">Tus clases de Google Classroom. Toca "Ver tareas" para ver el trabajo de cada clase, cuántos alumnos entregaron y quiénes fueron.</p>
     <div style="margin-bottom:10px"><button class="ghost small" id="btn-cr-disconnect">Desconectar</button></div>
     ${classroomCourses.length ? classroomCourses.map(c => `
       <div class="card" style="margin:10px 0">
