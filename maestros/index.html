@@ -183,6 +183,10 @@ let isAdmin = false;    // Privilegios de administrador: existe el
                         // privilegios de admin: así la cuenta funciona como
                         // maestro (sus clases, sus alumnos) y como
                         // administrador a la vez.
+const OWNER_UID = "K8wtJKKNkkg1Pv9bmBxxlgdpdSG3"; // UID de Auth de Anghelo,
+                        // dueño del portal: solo su cuenta puede dar o
+                        // quitar acceso de administrador a otro maestro,
+                        // aunque haya otros administradores.
 let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
 let currentTab = "alumnos";
 let selCourse = "";
@@ -1948,7 +1952,7 @@ async function renderTeachers() {
       <td>${(t.courses || []).map(id => `<div style="margin-bottom:6px"><small>${esc(courses[id] ? courses[id].name : id)}</small><br><input type="url" data-teacher="${t.uid}" data-course="${id}" data-field="classroomLink" value="${esc((t.classroomLinks || {})[id] || "")}" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></div>`).join("")}</td>
       <td>${t.active === false ? '<span class="badge off">Desactivado</span>' : "Activo"}</td>
       <td>${t.passwordChangedAt ? "cambiada el " + fmtPassDate(t.passwordChangedAt) : "nunca"}</td>
-      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""} <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button> <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button></td></tr>`).join("")}
+      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""} <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button>${me.uid === OWNER_UID && t.uid !== me.uid ? ` <button class="small ghost" data-set-admin="${t.uid}">${t.role === "admin" ? "Quitar admin" : "Hacer admin"}</button>` : ""} <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button></td></tr>`).join("")}
     </table>
   </div>`;
   $("btn-create-teacher").addEventListener("click", async () => {
@@ -2014,6 +2018,31 @@ async function renderTeachers() {
       showOk($("nt-msg"), "Contraseña temporal para " + (t ? t.name : "") + ": " + temp + " — pásasela al maestro y pídele que la cambie al entrar. No se volverá a mostrar.");
     } catch (e) {
       showErr($("nt-err"), "No se pudo restablecer: " + (e.message || e.code || e));
+    } finally { b.disabled = false; }
+  }));
+  // Dar o quitar el acceso de administrador a un maestro. El botón solo
+  // lo ve el dueño del portal (OWNER_UID): ningún otro administrador
+  // tiene esta opción. El cambio pasa por el servidor (setTeacherAdmin),
+  // que crea o borra admins/{uid} y actualiza el rol de la ficha; el
+  // cliente nunca escribe en /admins (las reglas lo prohíben).
+  s.querySelectorAll("[data-set-admin]").forEach(b => b.addEventListener("click", async () => {
+    const uid = b.getAttribute("data-set-admin");
+    const t = byUid[uid];
+    if (me.uid !== OWNER_UID) { showErr($("nt-err"), "Solo el dueño del portal puede cambiar administradores."); return; }
+    if (uid === me.uid) { showErr($("nt-err"), "No puedes cambiar tu propio acceso de administrador."); return; }
+    const makeAdmin = !t || t.role !== "admin";
+    const name = t ? t.name : "este maestro";
+    if (!confirm(makeAdmin ? "¿Hacer administradora a " + name + "? Podrá ver a todos los maestros y alumnos, crear cuentas y editar maestros, igual que tú." : "¿Quitarle el acceso de administrador a " + name + "? Volverá a ver solo a sus alumnos.")) return;
+    showErr($("nt-err"), ""); showOk($("nt-msg"), "");
+    b.disabled = true;
+    try {
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("setTeacherAdmin");
+      await fn({ uid, makeAdmin });
+      await renderTeachers();
+      showOk($("nt-msg"), makeAdmin ? name + " ahora es administradora." : "Se le quitó el acceso de administrador a " + name + ".");
+    } catch (e) {
+      showErr($("nt-err"), "No se pudo cambiar: " + (e.message || e.code || e));
     } finally { b.disabled = false; }
   }));
   // Guardar los enlaces de Classroom de un maestro (uno por curso que imparte)
@@ -2116,7 +2145,7 @@ async function openTeacherEdit(uid) {
     if (!newEmail) { showErr($("et-err"), "Escribe el correo."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) { showErr($("et-err"), "Escribe un correo válido."); return; }
     if (!selCourses.length) { showErr($("et-err"), "Elige al menos un curso."); return; }
-    const emailChanged = newEmail !== (t.email || "").trim().toLowerCase();
+    const emailChanged = newEmail !== (t.email || "").trim();
     if (emailChanged && isSelf && !confirm("Vas a cambiar tu propio correo a " + newEmail + ". A partir de ahí entrarás al portal con el correo nuevo. ¿Continuar?")) return;
     $("btn-save-teacher").disabled = true;
     try {
