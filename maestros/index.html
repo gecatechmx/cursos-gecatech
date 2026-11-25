@@ -206,6 +206,7 @@ let selCourse = "";
 let selTeacher = "";
 let showAllCols = false;
 let editingStudentId = null;
+let suggestedStudentId = ""; // siguiente ID de alumno disponible (GEC-0001…), se calcula en renderStudents
 let selClass = "";        // filtro de clase en Alumnos ("" = todas las clases)
 let myClasses = [];       // clases del maestro seleccionado (se cargan en renderStudents)
 let editingClassId = null; // clase en edición en el formulario de clases
@@ -2404,6 +2405,66 @@ async function fetchStudents(courseId, teacherId) {
   out.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   return out;
 }
+// ---------- ID único de alumno (constancias) ----------
+// El ID (GEC-0001, GEC-0002, ...) es SOLO la llave para jalar los datos
+// del alumno al generar una constancia o cualquier otro documento. No es
+// la matrícula y no es un código oficial del alumno: la matrícula NO se
+// guarda en el portal (Deni la escribe a mano al generar) y por eso no
+// existe ningún campo de matrícula en el documento del alumno.
+// BEGIN-STUDENT-ID-HELPERS
+function normalizeStudentId(raw) {
+  const s = String(raw == null ? "" : raw).trim().toUpperCase();
+  if (!s) return "";
+  const m = s.match(/^GEC-?0*(\d+)$/) || s.match(/^0*(\d+)$/);
+  if (!m) return "";
+  return "GEC-" + m[1].padStart(4, "0");
+}
+function nextStudentId(ids) {
+  let max = 0;
+  (ids || []).forEach(v => {
+    const m = String(v || "").match(/^GEC-(\d+)$/i);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return "GEC-" + String(max + 1).padStart(4, "0");
+}
+// ¿Ya hay otro alumno con este ID? excludeDocId es la ficha que se está
+// editando (que un alumno conserve su propio ID no es duplicado).
+function studentIdTaken(list, normalizedId, excludeDocId) {
+  const nid = normalizeStudentId(normalizedId);
+  if (!nid) return false;
+  return (list || []).some(st => st && normalizeStudentId(st.studentId) === nid && st.id !== excludeDocId);
+}
+// END-STUDENT-ID-HELPERS
+// IDs ya existentes para sugerir el siguiente: el admin y la gestora leen
+// todos los alumnos del portal; un maestro solo los suyos (su regla de
+// lectura no le deja ver los de otras maestras). Si la lectura falla, se
+// devuelve null y quien llama usa la lista que ya tiene en pantalla.
+async function fetchExistingStudentIds() {
+  try {
+    let snap;
+    if (isAdmin || isManager) snap = await db.collection("students").get();
+    else snap = await db.collection("students").where("teacherId", "==", me.uid).get();
+    const ids = [];
+    snap.forEach(d => { const v = d.data().studentId; if (v) ids.push(String(v)); });
+    return ids;
+  } catch (e) { return null; }
+}
+// ¿Existe otro alumno con este ID? El admin y la gestora consultan todo
+// el portal; el maestro consulta entre sus propios alumnos (la consulta
+// global le está negada por las reglas). Devuelve true si hay otro.
+async function studentIdExistsElsewhere(normalizedId, excludeDocId) {
+  const check = async (q) => {
+    const snap = await q.limit(5).get();
+    let found = false;
+    snap.forEach(d => { if (d.id !== excludeDocId) found = true; });
+    return found;
+  };
+  const byId = db.collection("students").where("studentId", "==", normalizedId);
+  try { return await check(byId); }
+  catch (e) {
+    return await check(byId.where("teacherId", "==", me.uid));
+  }
+}
 // ---------- Avisos del maestro ----------
 // createdAt puede ser Timestamp de servidor, número o null: normalizar a ms.
 function tsMillis(v) {
@@ -2749,6 +2810,15 @@ async function renderStudents() {
   const announcements = selCourse ? await fetchAnnouncements(selCourse) : [];
   diplomasCatalog = await fetchDiplomas();
   const editingSt = editingStudentId ? students.find(x => x.id === editingStudentId) : null;
+  // ID único del alumno (constancias): el admin y la gestora ven todos
+  // los IDs; un maestro solo los suyos. Si no se pueden leer (sin
+  // permiso), se sugiere a partir de los alumnos que ya están en pantalla.
+  const existingIds = await fetchExistingStudentIds();
+  const idsForSuggestion = existingIds !== null ? existingIds : students.map(st => st.studentId).filter(Boolean);
+  suggestedStudentId = nextStudentId(idsForSuggestion);
+  // Al dar de alta: el siguiente disponible. Al editar un alumno sin ID:
+  // el siguiente disponible para asignárselo. Al editar uno con ID: su ID.
+  const formStudentId = editingSt ? (editingSt.studentId || suggestedStudentId) : suggestedStudentId;
   const calendar = buildWeekCalendar(selCourse, course.syllabus || []);
   const courseClasses = classesOfCourse(myClasses, selCourse);
   const defClass = defaultClassFor(myClasses, selCourse);
@@ -2761,7 +2831,7 @@ async function renderStudents() {
   const classOptions = courseClasses.map(c => `<option value="${c.id}"${c.id === selClass ? " selected" : ""}>${esc(classScheduleText(c.days, c.startTime, c.endTime))}</option>`).join("");
   const selClassDoc = selClass ? courseClasses.find(c => c.id === selClass) : null;
   const selClassShort = selClassDoc ? classScheduleText(selClassDoc.days, selClassDoc.startTime, selClassDoc.endTime) : "";
-  const progColSpan = (calendar.length ? 10 : 9) + (isAdmin ? 1 : 0);
+  const progColSpan = (calendar.length ? 11 : 10) + (isAdmin ? 1 : 0);
   // Al editar: la semana actual del alumno; al dar de alta: la semana
   // actual de la clase del alumno (la de la clase por defecto, que hereda
   // la del curso si la clase aún no tiene semana propia).
@@ -2804,10 +2874,11 @@ async function renderStudents() {
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
     <div id="st-pass-msg" class="okmsg"></div><div id="st-pass-err" class="err"></div>
-    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Clase</th>${calendar.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th>${isAdmin ? "<th>Contraseña</th>" : ""}<th></th></tr>
+    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Clase</th><th>ID</th>${calendar.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th>${isAdmin ? "<th>Contraseña</th>" : ""}<th></th></tr>
     ${shownStudents.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td><td>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</td>
+      <td>${esc(st.studentId || "—")}</td>
       ${calendar.length ? `<td>${studentProgressCell(st, calendar)}</td>` : ""}
       <td>${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}</td>
       <td>${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
@@ -2817,6 +2888,18 @@ async function renderStudents() {
       <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></td></tr>`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
   </div>
+  ${(isAdmin || isManager) ? `<div class="card"><h2>Constancias</h2>
+    <p class="hint">Busca un alumno por su ID y se jalan sus datos para la constancia. La matrícula la escribes a mano aquí mismo; no se guarda en el portal.</p>
+    <div class="row">
+      <div><label>ID del alumno</label><input id="const-id" placeholder="Ej. GEC-0001"></div>
+      <div style="align-self:end"><button id="btn-const-search" class="gold">Buscar</button></div>
+    </div>
+    <div id="const-result"></div>
+    <div class="row" style="margin-top:12px">
+      <div><label>Matrícula (se escribe a mano, no se guarda)</label><input id="const-matricula" placeholder="Matrícula del alumno"></div>
+    </div>
+    <p class="hint">La generación del documento estará disponible cuando se suba la plantilla de la constancia. Por ahora solo se consultan los datos.</p>
+  </div>` : ""}
   ${classTeacher && canManageClasses ? `<div id="classes-card">${classManagerHtml(classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students })}</div>` : ""}
   <div class="card"><h2>Respaldo en Drive</h2>
     <p class="hint">Cada documento (PDF) que subas tú o tus alumnos se guarda en el portal y, si conectas tu Google Drive, también se copia automáticamente a una carpeta "Gecatech – Respaldo" en tu Drive. Conectar es opcional: sin conexión, tus archivos siguen guardados y visibles aquí.</p>
@@ -2845,7 +2928,9 @@ async function renderStudents() {
     <div class="row">
       <div><label>Fecha de inicio de clases</label><input id="st-start" type="date"></div>
       <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" placeholder="Ej. 2027"></div>
+      <div><label>ID del alumno</label><input id="st-studentid" value="${esc(formStudentId)}" placeholder="Ej. GEC-0001"></div>
     </div>
+    <p class="hint">ID único del alumno (ej. GEC-0001): es la llave para jalar sus datos al generar una constancia u otro documento. No es la matrícula.</p>
     <div class="row"><div><label>Clase</label><select id="st-clase">${courseClasses.length ? courseClasses.map(c => { const wk = classEffectiveWeekIdx(c, myClasses, course); return `<option value="${c.id}" data-week="${wk === null ? "" : wk}"${c.id === formClassId ? " selected" : ""}>${esc(classScheduleText(c.days, c.startTime, c.endTime))}</option>`; }).join("") : `<option value="">Primero registra una clase para este curso</option>`}</select></div></div>
     ${calendar.length ? `<div class="row"><div><label>Semana actual</label><select id="st-class"><option value="">Sin asignar</option>${weekOptionsHtml(calendar, formWeekIdx)}</select></div></div>` : ""}
     <div style="margin-top:12px"><h3>Diplomados</h3>
@@ -2896,6 +2981,35 @@ async function renderStudents() {
       showOk($("exp-msg"), "Plantilla en blanco descargada.");
     } catch (e) { showErr($("exp-err"), "No se pudo descargar: " + (e.message || e)); }
   });
+  // Constancias (solo admin y gestora: la tarjeta no se muestra a un
+  // maestro normal): buscar un alumno por su ID y mostrar sus datos. La
+  // matrícula se escribe a mano en el campo de la tarjeta y NO se guarda.
+  const btnConstSearch = $("btn-const-search");
+  if (btnConstSearch) {
+    const doConstSearch = async () => {
+      const sid = normalizeStudentId($("const-id").value);
+      const box = $("const-result");
+      if (!sid) { box.innerHTML = `<p class="err">Escribe el ID del alumno (ej. GEC-0001).</p>`; return; }
+      box.innerHTML = `<p class="muted">Buscando…</p>`;
+      try {
+        const snap = await db.collection("students").where("studentId", "==", sid).limit(5).get();
+        const found = [];
+        snap.forEach(d => found.push({ id: d.id, ...d.data() }));
+        if (!found.length) { box.innerHTML = `<p class="err">No se encontró ningún alumno con el ID ${esc(sid)}.</p>`; return; }
+        const allTeachers = await listTeachers();
+        box.innerHTML = found.map(st => {
+          const courseName = (courses[st.courseId] && courses[st.courseId].name) || st.courseId || "—";
+          const tName = (allTeachers.find(t => t.uid === st.teacherId) || {}).name || "";
+          return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(st.name || "")}</strong><br>
+            <span class="muted">ID ${esc(st.studentId || "")} · CURP ${esc(st.curp || "—")} · Generación ${esc(st.generation || "—")}</span><br>
+            Curso: ${esc(courseName)}${tName ? " · Maestro/a: " + esc(tName) : ""}</div></div>`;
+        }).join("") + (found.length > 1 ? `<p class="err">Hay ${found.length} alumnos con el mismo ID. Revisa el ID antes de generar la constancia.</p>` : "");
+      } catch (e) { box.innerHTML = `<p class="err">No se pudo buscar: ${esc(e.message || e)}</p>`; }
+    };
+    btnConstSearch.addEventListener("click", doConstSearch);
+    const constIdInput = $("const-id");
+    if (constIdInput) constIdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doConstSearch(); } });
+  }
   // Avisos para este curso: publicar y eliminar.
   const btnPublishAv = $("btn-publish-av");
   if (btnPublishAv) btnPublishAv.addEventListener("click", async () => {
@@ -2929,6 +3043,7 @@ async function renderStudents() {
     $("st-phone").value = st.phone || "";
     $("st-start").value = st.startDate || "";
     $("st-gen").value = st.generation || "";
+    $("st-studentid").value = st.studentId || suggestedStudentId;
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
   }));
   s.querySelectorAll("[data-docs]").forEach(b => b.addEventListener("click", async () => {
@@ -3070,10 +3185,12 @@ async function renderStudents() {
     const phone = $("st-phone").value.trim();
     const startDate = $("st-start").value;
     const generation = parseInt($("st-gen").value, 10);
+    const studentId = normalizeStudentId($("st-studentid") ? $("st-studentid").value : "");
     showErr($("st-err"), ""); showOk($("st-msg"), "");
     if (!name) { showErr($("st-err"), "Escribe el nombre del alumno."); return; }
     if (!selCourse || !selTeacher) { showErr($("st-err"), "Elige curso y maestro primero."); return; }
     if (!generation) { showErr($("st-err"), "Escribe la generación del alumno (año de graduación, ej. 2027)."); return; }
+    if (!studentId) { showErr($("st-err"), "Escribe el ID del alumno (ej. GEC-0001). El portal sugiere el siguiente disponible."); return; }
     const classIdVal = ($("st-clase") ? $("st-clase").value : "") || "";
     const classDoc = courseClasses.find(c => c.id === classIdVal) || null;
     if (!editingStudentId) {
@@ -3089,7 +3206,12 @@ async function renderStudents() {
       });
       const stClassSel = $("st-class");
       const classVal = stClassSel ? stClassSel.value : null; // null = este curso no tiene temario
-      const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
+      // El ID es único en todo el portal: si otro alumno ya lo tiene, no se guarda.
+      if (await studentIdExistsElsewhere(studentId, editingStudentId || null)) {
+        showErr($("st-err"), "Ya existe otro alumno con el ID " + studentId + ". Usa el siguiente disponible o escribe otro.");
+        return;
+      }
+      const data = { name, curp, phone, studentId, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
       if (classDoc) {
         data.classId = classDoc.id;
         data.classLabel = classScheduleText(classDoc.days, classDoc.startTime, classDoc.endTime);
