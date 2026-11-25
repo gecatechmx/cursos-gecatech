@@ -154,7 +154,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let me = null;          // {uid, name, email, role, courses[], active}
-let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número (índice global de la clase actual del curso)}
+let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
 let currentTab = "alumnos";
 let selCourse = "";
 let selTeacher = "";
@@ -1166,12 +1166,29 @@ const DEFAULT_SYLLABUS = {
   ]
 };
 
-// ---------- Temario y progreso ----------
-// El temario de un curso es [{title, topics: []}]. La "clase actual" (del
-// curso o de un alumno) es el ÍNDICE GLOBAL de la clase dentro del temario
-// aplanado (0 = primera clase del primer módulo): así no importa si dos
-// temas tienen el mismo número (en la planeación de Industrial el 4.5 y
-// el 11.6 se repiten) ni si el maestro edita los textos después.
+// ---------- Temario y progreso por SEMANAS ----------
+// El temario de un curso es [{title, topics: []}] y NO cambia: los temas
+// siguen siendo los de la planeación. El progreso, en cambio, se cuenta
+// por SEMANAS: cada módulo/materia reparte sus temas en sus semanas en
+// bloques seguidos lo más parejos posible.
+//   WEEK_PLAN[courseId][i] = semanas del módulo/materia i (por posición).
+//   Industrial: semanas de su planeación (4,5,5,4,5,4,5,4,5,4,4,4 = 53).
+//   Administrativo: sesiones de la tabla TIEMPO ESTIMADO de su planeación
+//   (3,3,6,6,5,5,4,5,4,5,4,4 = 54). Otros cursos: 1 tema = 1 semana.
+// El valor guardado de currentClass (curso o alumno) puede ser:
+//   - un NÚMERO viejo: índice global de tema (así se guardaba antes). Al
+//     leer se convierte a su semana con el calendario (migración en código,
+//     sin tocar Firestore; el número guardado no cambia hasta que el
+//     maestro elige otra semana).
+//   - un objeto NUEVO {week: n}: índice 0-based de la semana. Así se
+//     guarda desde ahora al elegir una semana (también las semanas sin
+//     tema nuevo, que no tienen índice de tema propio).
+// La conversión es idempotente: leer un {week} devuelve esa semana, y
+// leer un número siempre da la semana de ese tema.
+const WEEK_PLAN = {
+  industrial: [4, 5, 5, 4, 5, 4, 5, 4, 5, 4, 4, 4],
+  administrativo: [3, 3, 6, 6, 5, 5, 4, 5, 4, 5, 4, 4],
+};
 function flattenSyllabus(syllabus) {
   const out = [];
   (Array.isArray(syllabus) ? syllabus : []).forEach(m => {
@@ -1199,45 +1216,114 @@ function textToSyllabus(text) {
   });
   return modules.filter(m => m.topics.length || m.title);
 }
-function classOptionsHtml(flat, selectedIdx) {
-  // Opciones agrupadas por módulo (<optgroup>); value = índice global.
+// Reparte los temas de un módulo (arreglo de {index, topic}) en w semanas
+// en bloques seguidos lo más parejos posible: las primeras semanas llevan
+// un tema más cuando el reparto no es exacto. Si hay más semanas que temas,
+// las últimas semanas quedan vacías (semanas de continuación/práctica).
+function weeksOfModule(items, weekCount) {
+  const w = Math.max(1, weekCount | 0);
+  const base = Math.floor(items.length / w), rem = items.length % w;
+  const out = [];
+  let p = 0;
+  for (let i = 0; i < w; i++) {
+    const take = base + (i < rem ? 1 : 0);
+    out.push(items.slice(p, p + take));
+    p += take;
+  }
+  return out;
+}
+// Calendario de semanas de un curso: [{week (1..N), module, topicIdxs, topics}]
+function buildWeekCalendar(courseId, syllabus) {
+  const plan = WEEK_PLAN[courseId] || null;
+  const flat = flattenSyllabus(syllabus || []);
+  const modules = [];
+  flat.forEach(it => {
+    const last = modules[modules.length - 1];
+    if (last && last.title === it.module) last.items.push(it);
+    else modules.push({ title: it.module, items: [it] });
+  });
+  const weeks = [];
+  modules.forEach((m, mi) => {
+    const w = (plan && plan[mi]) ? plan[mi] : Math.max(1, m.items.length);
+    weeksOfModule(m.items, w).forEach(items => {
+      weeks.push({ week: weeks.length + 1, module: m.title, topicIdxs: items.map(t => t.index), topics: items.map(t => t.topic) });
+    });
+  });
+  return weeks;
+}
+// Semana (índice 0-based) a la que pertenece un índice global de tema.
+function topicIndexToWeekIdx(calendar, topicIdx) {
+  if (!calendar.length || typeof topicIdx !== "number") return null;
+  for (let i = 0; i < calendar.length; i++) if (calendar[i].topicIdxs.includes(topicIdx)) return i;
+  // El tema ya no existe (temario editado): la semana del tema anterior más cercano.
+  for (let t = topicIdx - 1; t >= 0; t--) {
+    for (let i = 0; i < calendar.length; i++) if (calendar[i].topicIdxs.includes(t)) return i;
+  }
+  return 0;
+}
+// Normaliza un valor guardado de currentClass a índice 0-based de semana.
+function storedToWeekIdx(calendar, stored) {
+  if (!calendar.length) return null;
+  if (stored && typeof stored === "object" && typeof stored.week === "number") {
+    if (stored.week < 0) return 0;
+    if (stored.week >= calendar.length) return calendar.length - 1;
+    return stored.week;
+  }
+  if (typeof stored === "number") return topicIndexToWeekIdx(calendar, stored);
+  return null;
+}
+// Texto de los temas de una semana: "t1; t2" o "(continuación)".
+function weekTopicsText(wk) {
+  const t = (wk.topics || []).join("; ");
+  return t || "(continuación)";
+}
+// Etiqueta corta para el desplegable (el módulo ya va en el <optgroup>).
+function weekOptionLabel(wk) {
+  return "Semana " + wk.week + " — " + weekTopicsText(wk);
+}
+// Etiqueta completa: "Semana X de N — módulo: temas".
+function weekFullLabel(wk, total) {
+  return "Semana " + wk.week + " de " + total + " — " + (wk.module || "Temario") + ": " + weekTopicsText(wk);
+}
+function weekOptionsHtml(calendar, selectedWeekIdx) {
+  // Opciones agrupadas por módulo (<optgroup>); value = índice 0-based de semana.
   let html = "";
   let curModule = null;
-  flat.forEach(item => {
-    if (item.module !== curModule) {
+  calendar.forEach((wk, i) => {
+    if (wk.module !== curModule) {
       if (curModule !== null) html += "</optgroup>";
-      html += `<optgroup label="${esc(item.module || "Temario")}">`;
-      curModule = item.module;
+      html += `<optgroup label="${esc(wk.module || "Temario")}">`;
+      curModule = wk.module;
     }
-    html += `<option value="${item.index}"${item.index === selectedIdx ? " selected" : ""}>${esc(item.topic)}</option>`;
+    html += `<option value="${i}"${i === selectedWeekIdx ? " selected" : ""}>${esc(weekOptionLabel(wk))}</option>`;
   });
   if (curModule !== null) html += "</optgroup>";
   return html;
 }
-function progressSummary(flat, idx) {
-  // {current, before, after} o null si no hay clase asignada.
-  if (!flat.length || typeof idx !== "number" || idx < 0 || idx >= flat.length) return null;
-  return { current: flat[idx], before: flat.slice(0, idx), after: flat.slice(idx + 1) };
+function progressSummary(calendar, weekIdx) {
+  // {current, before, after, total} o null si no hay semana asignada.
+  if (!calendar.length || typeof weekIdx !== "number" || weekIdx < 0 || weekIdx >= calendar.length) return null;
+  return { current: calendar[weekIdx], before: calendar.slice(0, weekIdx), after: calendar.slice(weekIdx + 1), total: calendar.length };
 }
-function progressStudentHtml(flat, idx) {
-  const p = progressSummary(flat, idx);
-  if (!p) return `<span class="muted">Sin clase asignada</span>`;
+function progressStudentHtml(calendar, weekIdx) {
+  const p = progressSummary(calendar, weekIdx);
+  if (!p) return `<span class="muted">Sin semana asignada</span>`;
   const n = p.after.length;
-  return `<strong>Va en:</strong> ${esc(p.current.module)} — ${esc(p.current.topic)}<br><span class="muted">Le faltan: ${n} clase${n === 1 ? "" : "s"}</span>` +
-    (n ? `<details><summary>Ver las que faltan</summary>${p.after.map(r => esc(r.topic)).join("<br>")}</details>` : `<br><span class="muted">Temario completo.</span>`);
+  return `<strong>Va en:</strong> ${esc(weekFullLabel(p.current, p.total))}<br><span class="muted">Le faltan: ${n} semana${n === 1 ? "" : "s"}</span>` +
+    (n ? `<details><summary>Ver las que faltan</summary>${p.after.map(w => esc(weekFullLabel(w, p.total))).join("<br>")}</details>` : `<br><span class="muted">Temario completo.</span>`);
 }
-function progressCourseHtml(flat, idx) {
-  const p = progressSummary(flat, idx);
-  if (!p) return `<p class="muted">Clase actual sin definir: elige en qué clase va el curso.</p>`;
+function progressCourseHtml(calendar, weekIdx) {
+  const p = progressSummary(calendar, weekIdx);
+  if (!p) return `<p class="muted">Semana actual sin definir: elige en qué semana va el curso.</p>`;
   const b = p.before.length, a = p.after.length;
-  return `<p><strong>Ya diste:</strong> ${b} clase${b === 1 ? "" : "s"}${b ? ` <details><summary>Ver las que ya diste</summary>${p.before.map(r => esc(r.module + " — " + r.topic)).join("<br>")}</details>` : ""}</p>
-  <p><strong>En curso:</strong> ${esc(p.current.module)} — ${esc(p.current.topic)}</p>
-  <p><strong>Faltan por dar:</strong> ${a} clase${a === 1 ? "" : "s"}${a ? ` <details><summary>Ver las que faltan</summary>${p.after.map(r => esc(r.module + " — " + r.topic)).join("<br>")}</details>` : " — temario completo."}</p>`;
+  return `<p><strong>Ya diste:</strong> ${b} semana${b === 1 ? "" : "s"}${b ? ` <details><summary>Ver las que ya diste</summary>${p.before.map(w => esc(weekFullLabel(w, p.total))).join("<br>")}</details>` : ""}</p>
+  <p><strong>En curso:</strong> ${esc(weekFullLabel(p.current, p.total))}</p>
+  <p><strong>Faltan por dar:</strong> ${a} semana${a === 1 ? "" : "s"}${a ? ` <details><summary>Ver las que faltan</summary>${p.after.map(w => esc(weekFullLabel(w, p.total))).join("<br>")}</details>` : " — temario completo."}</p>`;
 }
-function studentProgressCell(st, flat) {
-  const cur = (typeof st.currentClass === "number") ? st.currentClass : null;
-  return `<select data-prog-student="${st.id}" style="max-width:220px"><option value="">Sin asignar</option>${classOptionsHtml(flat, cur)}</select>` +
-    `<div id="prog-text-${st.id}" style="margin-top:6px">${progressStudentHtml(flat, st.currentClass)}</div>`;
+function studentProgressCell(st, calendar) {
+  const cur = storedToWeekIdx(calendar, st.currentClass);
+  return `<select data-prog-student="${st.id}" style="max-width:220px"><option value="">Sin asignar</option>${weekOptionsHtml(calendar, cur)}</select>` +
+    `<div id="prog-text-${st.id}" style="margin-top:6px">${progressStudentHtml(calendar, cur)}</div>`;
 }
 async function renderCourses() {
   const s = $("section");
@@ -1248,7 +1334,7 @@ async function renderCourses() {
     <td><input type="number" min="6" max="24" value="${c.durationMonths || 12}" data-course="${id}" data-field="durationMonths" style="max-width:80px"> meses</td>
     <td><input type="url" value="${esc(c.classroomUrl || "")}" data-course="${id}" data-field="classroomUrl" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></td>
     <td><button class="small ghost" data-rec-course="${id}">Grabaciones (${(c.recordings || []).length})</button></td>
-    <td><button class="small ghost" data-syl-course="${id}">Temario (${flattenSyllabus(c.syllabus || []).length})</button></td>
+    <td><button class="small ghost" data-syl-course="${id}">Temario (${flattenSyllabus(c.syllabus || []).length} temas)</button></td>
     <td><label style="font-weight:normal"><input type="checkbox" data-course="${id}" data-field="showDiplomas" ${c.showDiplomas ? "checked" : ""} style="width:auto"> Mostrar a los alumnos</label></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
@@ -1367,9 +1453,11 @@ function renderRecEditor(courseId) {
 }
 
 // ---------- Temario por curso (se guarda en courses/{id}.syllabus) ----------
-// La clase actual del curso (lo que el maestro está dando) se guarda en
+// La semana actual del curso (lo que el maestro está dando) se guarda en
 // courses/{id}.currentClass: la elige el maestro a mano, sin cálculo por
-// fecha; es independiente de la clase actual de cada alumno.
+// fecha; es independiente de la semana actual de cada alumno. Se guarda
+// como {week: n} (índice 0-based de semana); los valores viejos (número =
+// índice de tema) se convierten al leer con storedToWeekIdx.
 function renderSylEditor(courseId) {
   const box = $("syl-editor");
   if (!box) return;
@@ -1378,17 +1466,17 @@ function renderSylEditor(courseId) {
   const hasSyl = Array.isArray(c.syllabus) && c.syllabus.length > 0;
   const def = DEFAULT_SYLLABUS[courseId];
   const initialText = syllabusToText(hasSyl ? c.syllabus : (def || []));
-  const flat = flattenSyllabus(c.syllabus || []);
-  const curIdx = (typeof c.currentClass === "number") ? c.currentClass : null;
+  const calendar = buildWeekCalendar(courseId, c.syllabus || []);
+  const curWeek = storedToWeekIdx(calendar, c.currentClass);
   box.innerHTML = `
   <div class="card" style="margin-top:12px"><h3>Temario — ${esc(c.name)}</h3>
-    <p class="hint">Un tema por línea. Las líneas que empiezan con # son el nombre del módulo o materia. ${def && !hasSyl ? "Abajo viene el temario de la planeación: revísalo y toca Guardar temario." : "El maestro elige en qué clase va cada alumno y el portal muestra las que le faltan."}</p>
-    <div class="row"><div><label>Clase actual del curso (la que estás dando)</label>
-      <select id="syl-current" ${flat.length ? "" : "disabled"}>
+    <p class="hint">Un tema por línea. Las líneas que empiezan con # son el nombre del módulo o materia. ${def && !hasSyl ? "Abajo viene el temario de la planeación: revísalo y toca Guardar temario." : "El maestro elige en qué semana va cada alumno y el portal muestra las que le faltan."}</p>
+    <div class="row"><div><label>Semana actual del curso (la que estás dando)</label>
+      <select id="syl-current" ${calendar.length ? "" : "disabled"}>
         <option value="">Sin definir</option>
-        ${classOptionsHtml(flat, curIdx)}
+        ${weekOptionsHtml(calendar, curWeek)}
       </select></div></div>
-    <div id="syl-course-progress" style="margin-top:8px">${progressCourseHtml(flat, curIdx)}</div>
+    <div id="syl-course-progress" style="margin-top:8px">${progressCourseHtml(calendar, curWeek)}</div>
     <div style="margin-top:12px"><label>Temario (un tema por línea; # = módulo o materia)</label>
     <textarea id="syl-text" rows="14" style="width:100%">${esc(initialText)}</textarea></div>
     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="gold" id="syl-save">Guardar temario</button><button class="ghost" id="syl-close">Cerrar</button></div>
@@ -1402,14 +1490,14 @@ function renderSylEditor(courseId) {
       if (v === "") {
         await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
         delete courses[courseId].currentClass;
-        $("syl-course-progress").innerHTML = progressCourseHtml(flat, null);
-        showOk($("syl-msg"), "Clase actual del curso sin definir.");
+        $("syl-course-progress").innerHTML = progressCourseHtml(calendar, null);
+        showOk($("syl-msg"), "Semana actual del curso sin definir.");
       } else {
         const idx = parseInt(v, 10);
-        await db.collection("courses").doc(courseId).update({ currentClass: idx });
-        courses[courseId].currentClass = idx;
-        $("syl-course-progress").innerHTML = progressCourseHtml(flat, idx);
-        showOk($("syl-msg"), "Clase actual del curso guardada.");
+        await db.collection("courses").doc(courseId).update({ currentClass: { week: idx } });
+        courses[courseId].currentClass = { week: idx };
+        $("syl-course-progress").innerHTML = progressCourseHtml(calendar, idx);
+        showOk($("syl-msg"), "Semana actual del curso guardada.");
       }
     } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
   });
@@ -1421,9 +1509,9 @@ function renderSylEditor(courseId) {
       courses[courseId].syllabus = parsed;
       const n = flattenSyllabus(parsed).length;
       const btn = document.querySelector(`[data-syl-course="${courseId}"]`);
-      if (btn) btn.textContent = "Temario (" + n + ")";
+      if (btn) btn.textContent = "Temario (" + n + " temas)";
       renderSylEditor(courseId);
-      showOk($("syl-msg"), "Temario guardado: " + n + " clases.");
+      showOk($("syl-msg"), "Temario guardado: " + n + " temas.");
     } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
   });
   $("syl-close").addEventListener("click", () => { box.innerHTML = ""; });
@@ -1753,13 +1841,13 @@ async function renderStudents() {
   const announcements = selCourse ? await fetchAnnouncements(selCourse) : [];
   diplomasCatalog = await fetchDiplomas();
   const editingSt = editingStudentId ? students.find(x => x.id === editingStudentId) : null;
-  const flat = flattenSyllabus(course.syllabus || []);
-  const progColSpan = (flat.length ? 9 : 8) + (isAdmin ? 1 : 0);
-  // Al editar: la clase actual del alumno; al dar de alta: la clase actual
-  // del curso (el maestro la cambia si el alumno va en otra).
-  const formClassIdx = editingSt
-    ? ((typeof editingSt.currentClass === "number") ? editingSt.currentClass : null)
-    : ((typeof course.currentClass === "number") ? course.currentClass : null);
+  const calendar = buildWeekCalendar(selCourse, course.syllabus || []);
+  const progColSpan = (calendar.length ? 9 : 8) + (isAdmin ? 1 : 0);
+  // Al editar: la semana actual del alumno; al dar de alta: la semana
+  // actual del curso (el maestro la cambia si el alumno va en otra).
+  const formWeekIdx = editingSt
+    ? storedToWeekIdx(calendar, editingSt.currentClass)
+    : storedToWeekIdx(calendar, course.currentClass);
   const courseOptions = myCourseIds.map(id => `<option value="${id}" ${id === selCourse ? "selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const teacherOptions = isAdmin ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
   s.innerHTML = `
@@ -1777,11 +1865,11 @@ async function renderStudents() {
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
     <div id="st-pass-msg" class="okmsg"></div><div id="st-pass-err" class="err"></div>
-    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th>${flat.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th>${isAdmin ? "<th>Contraseña</th>" : ""}<th></th></tr>
+    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th>${calendar.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th>${isAdmin ? "<th>Contraseña</th>" : ""}<th></th></tr>
     ${students.map(st => `<tr>
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td>
-      ${flat.length ? `<td>${studentProgressCell(st, flat)}</td>` : ""}
+      ${calendar.length ? `<td>${studentProgressCell(st, calendar)}</td>` : ""}
       <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
       <td>${st.authUid ? `<span class="badge teacher">Con cuenta</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
       ${isAdmin ? `<td>${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</td>` : ""}
@@ -1818,7 +1906,7 @@ async function renderStudents() {
       <div><label>Fecha de inicio de clases</label><input id="st-start" type="date"></div>
       <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" placeholder="Ej. 2027"></div>
     </div>
-    ${flat.length ? `<div class="row"><div><label>Clase actual</label><select id="st-class"><option value="">Sin asignar</option>${classOptionsHtml(flat, formClassIdx)}</select></div></div>` : ""}
+    ${calendar.length ? `<div class="row"><div><label>Semana actual</label><select id="st-class"><option value="">Sin asignar</option>${weekOptionsHtml(calendar, formWeekIdx)}</select></div></div>` : ""}
     <div style="margin-top:12px"><h3>Diplomados</h3>
     ${diplomasCatalog.length ? diplomasCatalog.map(dp => {
       const cur = (editingSt && editingSt.diplomas && editingSt.diplomas[dp.id]) || "pendiente";
@@ -1982,13 +2070,13 @@ async function renderStudents() {
     try {
       if (v === "") {
         await db.collection("students").doc(id).update({ currentClass: firebase.firestore.FieldValue.delete() });
-        if (textEl) textEl.innerHTML = progressStudentHtml(flat, null);
+        if (textEl) textEl.innerHTML = progressStudentHtml(calendar, null);
       } else {
         const idx = parseInt(v, 10);
-        await db.collection("students").doc(id).update({ currentClass: idx });
-        if (textEl) textEl.innerHTML = progressStudentHtml(flat, idx);
+        await db.collection("students").doc(id).update({ currentClass: { week: idx } });
+        if (textEl) textEl.innerHTML = progressStudentHtml(calendar, idx);
       }
-    } catch (e) { showErr($("exp-err"), "No se pudo guardar la clase actual: " + (e.message || e)); }
+    } catch (e) { showErr($("exp-err"), "No se pudo guardar la semana actual: " + (e.message || e)); }
   }));
   const cancel = $("btn-cancel-edit");
   if (cancel) cancel.addEventListener("click", () => { editingStudentId = null; renderStudents(); });
@@ -2012,7 +2100,7 @@ async function renderStudents() {
       const stClassSel = $("st-class");
       const classVal = stClassSel ? stClassSel.value : null; // null = este curso no tiene temario
       const data = { name, curp, phone, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
-      if (classVal !== null && classVal !== "") data.currentClass = parseInt(classVal, 10);
+      if (classVal !== null && classVal !== "") data.currentClass = { week: parseInt(classVal, 10) };
       if (editingStudentId) {
         const upd = { ...data };
         if (classVal === "") upd.currentClass = firebase.firestore.FieldValue.delete();
