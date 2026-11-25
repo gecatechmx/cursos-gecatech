@@ -75,6 +75,7 @@
     <div><h1>Portal Alumnos</h1><small>Gecatech · Capacitación laboral</small></div>
     <div class="spacer"></div>
     <div class="user" id="user-chip"></div>
+    <button class="ghost small" id="btn-account">Mi cuenta</button>
     <button class="ghost small" id="btn-logout">Salir</button>
   </header>
   <div class="wrap">
@@ -131,6 +132,7 @@ const MAX_FILE_MB = 10;
 let myUid = null;
 let myEmail = "";
 let myName = "";
+let myEnrollments = [];
 
 // ---------- Sesión ----------
 $("btn-login").addEventListener("click", async () => {
@@ -164,6 +166,7 @@ $("link-reset").addEventListener("click", async (e) => {
   }
 });
 $("btn-logout").addEventListener("click", async () => { await auth.signOut(); location.reload(); });
+$("btn-account").addEventListener("click", () => renderAccount());
 
 // Restaurar la sesión guardada al cargar la página: si el navegador
 // guardó el inicio de sesión, se entra directo sin pedir correo y
@@ -270,12 +273,16 @@ async function enterApp() {
     return;
   }
   const { list, courses } = data;
+  myEnrollments = list;
   if (list.length) myName = list[0].name || "";
   $("user-chip").innerHTML = esc(myName || myEmail) + "<br>Alumno/a";
   if (!list.length) {
     s.innerHTML = `<div class="card"><h2>Sin cursos vinculados</h2><p>Tu cuenta aún no está vinculada a ningún curso. Pide a tu maestro o al administrador que te vincule.</p></div>`;
     return;
   }
+  // Si el admin restableció la contraseña, se abre "Mi cuenta" y no se
+  // muestran los cursos hasta que el alumno la cambie por una suya.
+  if (list.some(d => d.mustChangePassword === true)) { renderAccount(); return; }
   // Avisos del maestro por curso (solo los activos, los 5 más recientes).
   // Sin orderBy en la consulta (evita necesitar un índice compuesto):
   // se ordena en el cliente por fecha descendente.
@@ -344,6 +351,65 @@ async function enterApp() {
     </div>`;
   }).join("");
   for (const st of list) renderDocs($("docs-" + st.id), st);
+}
+
+// ---------- Mi cuenta ----------
+// Cambio de contraseña propio: se re-autentica con la contraseña actual
+// y luego se actualiza. La contraseña NUNCA se guarda en Firestore:
+// solo se anota cuándo se cambió (passwordChangedAt) y si el admin pidió
+// que se cambie (mustChangePassword). La marca se guarda en todas sus
+// fichas (un alumno puede estar en varios cursos).
+function fmtPassDate(v) {
+  const ms = tsMillis(v);
+  if (!ms) return "nunca";
+  return new Date(ms).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
+}
+function renderAccount() {
+  const s = $("section");
+  const must = myEnrollments.some(d => d.mustChangePassword === true);
+  const lastChange = myEnrollments.map(d => d.passwordChangedAt).find(v => v) || null;
+  s.innerHTML = `
+  <div class="card"><h2>Mi cuenta</h2>
+    <p><strong>${esc(myName || myEmail)}</strong> · ${esc(myEmail)} · Alumno/a</p>
+    <p class="muted">Último cambio de contraseña: ${fmtPassDate(lastChange)}.</p>
+    ${must ? `<p class="err" style="font-weight:600">Tu contraseña fue restablecida por el administrador. Cámbiala ahora por una contraseña tuya.</p>` : ""}
+  </div>
+  <div class="card"><h2>Cambiar mi contraseña</h2>
+    <p class="hint">Tu contraseña solo la sabes tú: el administrador no puede verla, solo puede restablecerla si la olvidas.</p>
+    <div class="row">
+      <div><label>Contraseña actual</label><input id="pw-cur" type="password" autocomplete="current-password"></div>
+      <div><label>Contraseña nueva</label><input id="pw-new" type="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres"></div>
+      <div><label>Repite la contraseña nueva</label><input id="pw-new2" type="password" autocomplete="new-password"></div>
+    </div>
+    <div style="margin-top:14px"><button id="btn-change-pass" class="gold">Cambiar contraseña</button> <button id="btn-back-courses" class="ghost">Volver a mis cursos</button></div>
+    <div id="pw-msg" class="okmsg"></div><div id="pw-err" class="err"></div>
+  </div>`;
+  $("btn-back-courses").addEventListener("click", () => enterApp());
+  $("btn-change-pass").addEventListener("click", async () => {
+    const cur = $("pw-cur").value;
+    const nw = $("pw-new").value;
+    const nw2 = $("pw-new2").value;
+    showErr($("pw-err"), ""); showOk($("pw-msg"), "");
+    if (!cur || nw.length < 6) { showErr($("pw-err"), "Escribe tu contraseña actual y una nueva de mínimo 6 caracteres."); return; }
+    if (nw !== nw2) { showErr($("pw-err"), "La contraseña nueva y su repetición no coinciden."); return; }
+    $("btn-change-pass").disabled = true;
+    try {
+      const cred = firebase.auth.EmailAuthProvider.credential(myEmail, cur);
+      await auth.currentUser.reauthenticateWithCredential(cred);
+      await auth.currentUser.updatePassword(nw);
+      const upd = { passwordChangedAt: firebase.firestore.FieldValue.serverTimestamp(), mustChangePassword: false };
+      await Promise.all(myEnrollments.map(d => db.collection("students").doc(d.id).update(upd)));
+      myEnrollments.forEach(d => { d.passwordChangedAt = new Date(); d.mustChangePassword = false; });
+      showOk($("pw-msg"), "Contraseña cambiada.");
+      $("pw-cur").value = ""; $("pw-new").value = ""; $("pw-new2").value = "";
+      renderAccount();
+    } catch (e) {
+      const code = e.code || "";
+      showErr($("pw-err"), code === "auth/wrong-password" || code === "auth/invalid-credential"
+        ? "La contraseña actual no es correcta."
+        : "No se pudo cambiar: " + (e.message || code));
+    } finally { $("btn-change-pass").disabled = false; }
+  });
 }
 
 // ---------- Mis documentos ----------
