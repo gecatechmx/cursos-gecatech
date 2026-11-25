@@ -246,13 +246,18 @@ function isClassToday(schedule) {
   const found = norm.match(/\b(domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/g) || [];
   return found.includes(days[new Date().getDay()]);
 }
+function teacherPhotoHtml(url, name) {
+  const initial = ((name || "?").trim().charAt(0) || "?").toUpperCase();
+  if (url) return `<img src="${esc(url)}" alt="" style="width:40px;height:40px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px">`;
+  return `<span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#e8e2d9;color:#555;text-align:center;line-height:40px;font-size:18px;vertical-align:middle;margin-right:8px">${esc(initial)}</span>`;
+}
 function teacherContact(course, st) {
   // 1) El maestro guardado en la ficha del alumno al crear su cuenta: es el
   // maestro exacto de ese alumno, también en cursos con varios maestros.
   if (st && st.teacherWhatsApp) {
     const name = (st.teacherName || "").trim();
     const mapped = name && TEACHER_CONTACTS[name];
-    return { label: (mapped && mapped.label) || name || "Tu maestro/a", phone: (mapped && mapped.phone) || "", wa: String(st.teacherWhatsApp) };
+    return { label: (mapped && mapped.label) || name || "Tu maestro/a", phone: (mapped && mapped.phone) || "", wa: String(st.teacherWhatsApp), photoUrl: (st.teacherPhotoUrl || "").trim() };
   }
   // 2) El maestro del curso (sirve para cursos de un solo maestro).
   const name = course && course.teacher ? String(course.teacher).trim() : "";
@@ -340,7 +345,7 @@ async function enterApp() {
       <h2>${esc(course.name || "Curso")}</h2>
       ${isClassToday(course.schedule) ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:8px 10px;font-weight:600">Hoy tienes clase de ${esc(course.name || "este curso")}</p>` : ""}
       <p class="hint">${esc(course.schedule || "")}</p>
-      <p><strong>Maestro/a:</strong> ${esc(teacherLabel)}</p>
+      <p>${teacherPhotoHtml(contact ? contact.photoUrl : "", teacherLabel)}<strong>Maestro/a:</strong> ${esc(teacherLabel)}</p>
       <p><a class="btn gold" target="_blank" rel="noopener" href="https://wa.me/${wa.wa}?text=${encodeURIComponent(waText)}">WhatsApp con ${esc(contact ? contact.label : "informes generales")}</a> <span class="muted">${esc(wa.phone)}</span></p>
       ${classroomUrl ? `<p><a class="btn" target="_blank" rel="noopener" href="${esc(classroomUrl)}">Entrar a mi Classroom</a></p>` : ""}
       ${recs.length ? `<div style="margin-top:10px"><h3>Grabaciones</h3>${recs.map(r => `<p><a target="_blank" rel="noopener" href="${esc(r.url || "")}">${esc(r.title || "Grabación")}</a>${r.date ? ` <span class="muted">${fmtRecDate(r.date)}</span>` : ""}</p>`).join("")}</div>` : ""}
