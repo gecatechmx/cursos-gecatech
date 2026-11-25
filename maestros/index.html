@@ -212,6 +212,7 @@ let myClasses = [];       // clases del maestro seleccionado (se cargan en rende
 let editingClassId = null; // clase en edición en el formulario de clases
 let classesBoxTeacher = ""; // maestro cuyo gestor de clases está abierto en la pestaña Maestros (admin)
 let diplomasCatalog = []; // [{id, name}] catálogo de diplomados (se carga en renderStudents/renderCourses)
+let renderStudentsGen = 0; // contador de generación de renderStudents(): un render obsoleto (llegó uno más nuevo mientras esperaba) se descarta en vez de redibujar la sección
 
 function showErr(el, msg) { el.textContent = msg; }
 function showOk(el, msg) { el.textContent = msg; }
@@ -2787,6 +2788,11 @@ async function openTeacherClasses(uid, name) {
 }
 
 async function renderStudents() {
+  // Anti-carrera: cada llamada toma un número de generación; si llega una
+  // llamada más nueva mientras esta espera un await, esta se descarta y no
+  // redibuja la sección (evita que un render tardío vacíe el formulario).
+  const myGen = ++renderStudentsGen;
+  const isStale = () => myGen !== renderStudentsGen;
   const s = $("section");
   let myCourseIds = (isAdmin || isManager) ? Object.keys(courses) : (me.courses || []);
   if (!selCourse || !myCourseIds.includes(selCourse)) selCourse = myCourseIds[0] || "";
@@ -2797,23 +2803,30 @@ async function renderStudents() {
   } else {
     selTeacher = me.uid;
   }
+  if (isStale()) return;
   const course = courses[selCourse] || {};
   const teacherObj = (isAdmin || isManager) ? teachers.find(t => t.uid === selTeacher) : me;
   driveConn = await fetchDriveConnection(selTeacher);
+  if (isStale()) return;
   // Enlace de Classroom del curso seleccionado: primero el propio del maestro, si no el del curso.
   const classroomLink = ((teacherObj && teacherObj.classroomLinks) || {})[selCourse] || course.classroomUrl || "";
   const students = selCourse ? await fetchStudents(selCourse, selTeacher) : [];
+  if (isStale()) return;
   myClasses = await fetchClasses(selTeacher);
+  if (isStale()) return;
   // Un maestro también imparte los cursos en los que tiene clases registradas
   // (por si su lista de cursos aún no incluye un curso nuevo).
   myCourseIds = [...new Set([...myCourseIds, ...myClasses.map(c => c.courseId)])];
   const announcements = selCourse ? await fetchAnnouncements(selCourse) : [];
+  if (isStale()) return;
   diplomasCatalog = await fetchDiplomas();
+  if (isStale()) return;
   const editingSt = editingStudentId ? students.find(x => x.id === editingStudentId) : null;
   // ID único del alumno (constancias): el admin y la gestora ven todos
   // los IDs; un maestro solo los suyos. Si no se pueden leer (sin
   // permiso), se sugiere a partir de los alumnos que ya están en pantalla.
   const existingIds = await fetchExistingStudentIds();
+  if (isStale()) return;
   const idsForSuggestion = existingIds !== null ? existingIds : students.map(st => st.studentId).filter(Boolean);
   suggestedStudentId = nextStudentId(idsForSuggestion);
   // Al dar de alta: el siguiente disponible. Al editar un alumno sin ID:
@@ -2921,13 +2934,13 @@ async function renderStudents() {
   </div>` : ""}
   <div class="card"><h2>${editingStudentId ? "Editar alumno" : "Dar de alta a un alumno"}</h2>
     <div class="row">
-      <div><label>Apellido y Nombre</label><input id="st-name" placeholder="Ej. Juan Pérez López"></div>
-      <div><label>CURP</label><input id="st-curp" placeholder="CURP del alumno"></div>
-      <div><label>Teléfono</label><input id="st-phone" placeholder="Teléfono / WhatsApp"></div>
+      <div><label>Apellido y Nombre</label><input id="st-name" value="${esc(editingSt ? (editingSt.name || "") : "")}" placeholder="Ej. Juan Pérez López"></div>
+      <div><label>CURP</label><input id="st-curp" value="${esc(editingSt ? (editingSt.curp || "") : "")}" placeholder="CURP del alumno"></div>
+      <div><label>Teléfono</label><input id="st-phone" value="${esc(editingSt ? (editingSt.phone || "") : "")}" placeholder="Teléfono / WhatsApp"></div>
     </div>
     <div class="row">
-      <div><label>Fecha de inicio de clases</label><input id="st-start" type="date"></div>
-      <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" placeholder="Ej. 2027"></div>
+      <div><label>Fecha de inicio de clases</label><input id="st-start" type="date" value="${esc(editingSt ? (editingSt.startDate || "") : "")}"></div>
+      <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" value="${esc(editingSt ? (editingSt.generation || "") : "")}" placeholder="Ej. 2027"></div>
       <div><label>ID del alumno</label><input id="st-studentid" value="${esc(formStudentId)}" placeholder="Ej. GEC-0001"></div>
     </div>
     <p class="hint">ID único del alumno (ej. GEC-0001): es la llave para jalar sus datos al generar una constancia u otro documento. No es la matrícula.</p>
@@ -3223,7 +3236,26 @@ async function renderStudents() {
       }
       if (classVal !== null && classVal !== "") data.currentClass = { week: parseInt(classVal, 10) };
       if (editingStudentId) {
+        // Defensa v9.1: leer la ficha guardada justo antes de escribir. Si
+        // un re-render vació algún campo del formulario, se conserva el
+        // valor guardado en vez de sobrescribirlo con "".
+        let saved = {};
+        try {
+          const snap = await db.collection("students").doc(editingStudentId).get();
+          if (snap.exists) saved = snap.data() || {};
+        } catch (e) { /* si no se puede leer, se guarda lo del formulario */ }
         const upd = { ...data };
+        if (!upd.curp && saved.curp) upd.curp = saved.curp;
+        if (!upd.phone && saved.phone) upd.phone = saved.phone;
+        if (!upd.name && saved.name) upd.name = saved.name;
+        if (!upd.startDate && saved.startDate) upd.startDate = saved.startDate;
+        if (!upd.generation && saved.generation) upd.generation = saved.generation;
+        // El curso, el maestro y el estado activo son los de la ficha
+        // guardada, no los de los filtros de la sección (pueden haber
+        // cambiado entre Editar y Guardar y reasignarían al alumno).
+        if (saved.courseId) upd.courseId = saved.courseId;
+        if (saved.teacherId) upd.teacherId = saved.teacherId;
+        if (typeof saved.active === "boolean") upd.active = saved.active;
         if (classVal === "") upd.currentClass = firebase.firestore.FieldValue.delete();
         await db.collection("students").doc(editingStudentId).update(upd);
         showOk($("st-msg"), "Alumno actualizado.");
