@@ -339,11 +339,14 @@ async function renderSection() {
 // ---------- Google Classroom (API oficial: lectura y escritura) ----------
 // Classroom no se puede incrustar en un iframe (responde
 // X-Frame-Options: SAMEORIGIN), por eso se lee con la API oficial de
-// Google. El token de acceso vive solo en memoria y se renueva solo:
-// el permiso duradero (refresh token) se guarda en el servidor (Cloud
-// Function + Firestore, solo el servidor puede leerlo), nunca en
-// localStorage ni en el código. Por eso la conexión sobrevive al
-// recargar la página: al entrar, el portal pide un token nuevo al
+// Google. El navegador NUNCA llama directo a classroom.googleapis.com:
+// esas llamadas fallan en el navegador con "Failed to fetch". Todas las
+// llamadas van por la Cloud Function "classroomProxy": el servidor pide
+// el token con el permiso guardado, llama a Google y devuelve el
+// resultado. El permiso duradero (refresh token) se guarda en el
+// servidor (Cloud Function + Firestore, solo el servidor puede leerlo),
+// nunca en localStorage ni en el código. Por eso la conexión sobrevive
+// al recargar la página: al entrar, el portal pide un token nuevo al
 // servidor sin que tengas que conectar de nuevo.
 let classroomToken = null;
 let classroomTokenExpiresAt = 0;
@@ -381,64 +384,47 @@ async function refreshClassroomToken() {
   return classroomToken;
 }
 
-async function ensureClassroomToken() {
-  // Token válido todavía: se usa. Si vence en menos de 60 segundos, se
-  // renueva antes de llamar a Classroom.
-  if (classroomToken && Date.now() < classroomTokenExpiresAt - 60000) return classroomToken;
-  return refreshClassroomToken();
-}
-
-// Llamada a la API de Classroom. En 401 reintenta una vez con un token
-// nuevo del servidor; en 403 el permiso guardado no cubre lo pedido y
-// hay que reconectar para aceptar los permisos nuevos.
+// Llamada a la API de Classroom A TRAVÉS DEL SERVIDOR (función
+// classroomProxy). El navegador NO llama directo a
+// classroom.googleapis.com: esas llamadas fallan en el navegador con
+// "Failed to fetch". El servidor pide el token con el permiso guardado,
+// llama a Google y devuelve {status, data}. En 401 el servidor ya
+// reintentó una vez con un token nuevo; en 403 el permiso guardado no
+// cubre lo pedido y hay que reconectar para aceptar los permisos nuevos.
 async function classroomApi(path, opts) {
   const o = opts || {};
   const method = o.method || "GET";
   const body = o.body || null;
   const soft = !!o.soft;
-  const tok = await ensureClassroomToken();
-  if (!tok) {
+  await loadFunctionsScript();
+  const fn = firebase.functions().httpsCallable("classroomProxy");
+  let res;
+  try {
+    const r = await fn({ path, method, body });
+    res = r.data || {};
+  } catch (e) {
+    // No se pudo hablar con el servidor (red, sesión cerrada).
+    if (soft) return null;
+    throw new Error("No se pudo hablar con el servidor. Revisa tu conexión e intenta de nuevo.");
+  }
+  const status = res.status || 0;
+  if (status === 401) {
+    classroomToken = null;
+    classroomTokenExpiresAt = 0;
     if (soft) return null;
     throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
   }
-  const doFetch = (t) => fetch("https://classroom.googleapis.com/v1" + path, {
-    method,
-    headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : null
-  });
-  let r = await doFetch(tok);
-  if (r.status === 401) {
-    // El token ya no sirve: se pide uno nuevo al servidor y se reintenta
-    // una sola vez.
+  if (status === 403) {
     classroomToken = null;
     classroomTokenExpiresAt = 0;
-    try {
-      const tok2 = await refreshClassroomToken();
-      if (tok2) r = await doFetch(tok2);
-    } catch (e) { /* sin conexión guardada: se sigue con el 401 */ }
-  }
-  if (!r.ok) {
-    if (r.status === 403) {
-      if (!soft) {
-        classroomToken = null;
-        classroomTokenExpiresAt = 0;
-        throw new Error("Classroom pidió permisos nuevos: desconecta y vuelve a conectar para aceptar los permisos de calificar y crear tareas.");
-      }
-      return null;
-    }
-    if (r.status === 401) {
-      if (!soft) {
-        classroomToken = null;
-        classroomTokenExpiresAt = 0;
-        throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
-      }
-      return null;
-    }
     if (soft) return null;
-    throw new Error("Google Classroom no respondió (" + r.status + "). Intenta de nuevo.");
+    throw new Error("Classroom pidió permisos nuevos: desconecta y vuelve a conectar para aceptar los permisos de calificar y crear tareas.");
   }
-  if (r.status === 204) return {};
-  return r.json();
+  if (status < 200 || status >= 300) {
+    if (soft) return null;
+    throw new Error("Google Classroom no respondió (" + status + "). Intenta de nuevo.");
+  }
+  return res.data || {};
 }
 
 async function classroomFetch(path) {
