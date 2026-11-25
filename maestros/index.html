@@ -8,6 +8,8 @@
   :root { --navy:#033e6e; --navy2:#046cc4; --blue:#046cc4; --gold:#f4bc04; --gold-dark:#d9a800; --gold-soft:#fdf3ce; --bg:#f6f8fa; --card:#fff; --text:#3c3c3c; --muted:#5c6670; --line:#e2e7ec; --ok:#4a7003; --err:#d41c14; }
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+  .watermark { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:-1; }
+  .watermark img { width:min(60vw,520px); height:auto; opacity:.07; }
   header.top { background:var(--navy); color:#fff; padding:12px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:3px solid var(--gold); box-shadow:0 2px 10px rgba(3,62,110,.18); }
   header.top img { height:46px; width:auto; background:#fff; border-radius:10px; padding:3px 7px; box-shadow:0 1px 5px rgba(0,0,0,.28); }
   header.top h1 { font-size:20px; margin:0; letter-spacing:.3px; }
@@ -73,6 +75,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 </head>
 <body>
+<div class="watermark" aria-hidden="true"><img src="/logo-gecatech.jpg" alt="" onerror="this.style.display='none'"></div>
 
 <div id="view-login" class="wrap">
   <div class="card login-box">
@@ -183,10 +186,20 @@ let isAdmin = false;    // Privilegios de administrador: existe el
                         // privilegios de admin: así la cuenta funciona como
                         // maestro (sus clases, sus alumnos) y como
                         // administrador a la vez.
+let isManager = false;  // Rol de gestora: la ficha teachers/{uid}.role es
+                        // "manager" (la nombra solo el dueño con el botón
+                        // "Hacer gestor"). La gestora ve a todos los
+                        // alumnos y todas las clases, crea cuentas y
+                        // publica avisos, igual que el admin, pero no
+                        // puede hacer admin, editar maestros ni
+                        // restablecer contraseñas. El permiso real en las
+                        // reglas es el documento managers/{uid} (ver
+                        // isManager() en firestore.rules).
 const OWNER_UID = "K8wtJKKNkkg1Pv9bmBxxlgdpdSG3"; // UID de Auth de Anghelo,
                         // dueño del portal: solo su cuenta puede dar o
-                        // quitar acceso de administrador a otro maestro,
-                        // aunque haya otros administradores.
+                        // quitar el rol de gestora a otro maestro. El rol
+                        // de administrador quedó solo para el dueño (el
+                        // botón "Hacer admin" ya no existe).
 let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
 let currentTab = "alumnos";
 let selCourse = "";
@@ -282,6 +295,7 @@ $("btn-login").addEventListener("click", async () => {
     }
     me = profile;
     isAdmin = await loadAdminFlag(cred.user.uid, profile);
+    isManager = me.role === "manager";
     enterApp();
   } catch (e) {
     const msg = (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
@@ -320,6 +334,7 @@ async function restoreSession(user) {
     }
     me = profile;
     isAdmin = await loadAdminFlag(user.uid, profile);
+    isManager = me.role === "manager";
     enterApp();
   } catch (e) {
     showErr($("login-error"), "No se pudo entrar: " + (e.message || e));
@@ -361,11 +376,13 @@ function enterApp() {
   if (me.mustChangePassword === true) currentTab = "cuenta";
   $("view-login").classList.add("hidden");
   $("view-app").classList.remove("hidden");
-  $("user-chip").innerHTML = esc(me.name) + "<br>" + (isAdmin ? "Administrador" : "Maestro/a");
+  $("user-chip").innerHTML = esc(me.name) + "<br>" + (isAdmin ? "Administrador" : isManager ? "Gestora" : "Maestro/a");
   const tabs = $("tabs");
   tabs.innerHTML = "";
   const defs = isAdmin
     ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]]
+    : isManager
+    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]]
     : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]];
   defs.forEach(([id, label]) => {
     const b = document.createElement("button");
@@ -655,9 +672,12 @@ async function disconnectDrive() {
 
 // Decide qué muestra la zona de acciones de la tarjeta "Respaldo en Drive"
 // en la vista Alumnos. Se prueba en Node.
-// - Admin viendo a OTRA maestra: solo el texto de solo lectura (sin botones).
-// - Admin viendo SU propio estado (isSelf): conecta su Drive igual que una
-//   maestra, porque también da clases y sus alumnos necesitan el respaldo.
+// - Admin o gestora viendo a OTRA maestra: solo el texto de solo lectura
+//   (sin botones). El parámetro isAdmin aquí significa "visor con
+//   privilegios" (admin o gestora): quien llama pasa isAdmin || isManager.
+// - Admin o gestora viendo SU propio estado (isSelf): conecta su Drive
+//   igual que una maestra, porque también da clases y sus alumnos
+//   necesitan el respaldo.
 // - Maestra: botón conectar o desconectar según tenga conexión.
 // - Sin configurar (configured=false): sin botones (el aviso sale en la
 //   línea de estado de la tarjeta).
@@ -1671,10 +1691,11 @@ function studentProgressCell(st, calendar) {
 const CAL_DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const CAL_DAY_NUM = [1, 2, 3, 4, 5, 6, 0]; // Lunes..Domingo en 0=Dom..6=Sáb
 function calendarClassesFor(list, me, isAdminFlag) {
-  // Clases visibles en el calendario: todas para el admin, solo las
-  // propias para cada maestra. El privilegio de admin viene del
-  // documento admins/{uid}, no del role de la ficha: una cuenta puede
-  // ser maestro y admin a la vez. Se prueba en Node.
+  // Clases visibles en el calendario: todas para el admin y la gestora,
+  // solo las propias para cada maestra. El privilegio de admin viene del
+  // documento admins/{uid} y el de gestora de managers/{uid}, no del
+  // role de la ficha: una cuenta puede ser maestro y admin (o gestora)
+  // a la vez. Se prueba en Node.
   if (!list) return [];
   if (isAdminFlag) return list.filter(c => c.active !== false);
   return list.filter(c => c.active !== false && me && c.teacherId === me.uid);
@@ -1685,7 +1706,7 @@ async function renderCalendar() {
   let all = [];
   let teacherNames = {};
   try {
-    if (isAdmin) {
+    if (isAdmin || isManager) {
       const snap = await db.collection("classes").get();
       snap.forEach(d => all.push({ id: d.id, ...d.data() }));
       (await listTeachers()).forEach(t => { teacherNames[t.uid] = t.name; });
@@ -1697,7 +1718,7 @@ async function renderCalendar() {
     s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2><p class="err">No se pudieron cargar las clases: ${esc(e.message || e)}</p></div>`;
     return;
   }
-  const shown = calendarClassesFor(all, me, isAdmin);
+  const shown = calendarClassesFor(all, me, isAdmin || isManager);
   const byDay = CAL_DAY_NUM.map(() => []);
   shown.forEach(c => (c.days || []).forEach(d => {
     const idx = CAL_DAY_NUM.indexOf(d);
@@ -1707,10 +1728,10 @@ async function renderCalendar() {
   const colHtml = byDay.map((list, i) => `<td style="vertical-align:top;width:14%"><strong>${CAL_DAYS[i]}</strong>${list.length ? list.map(c => {
     const course = courses[c.courseId] || {};
     const meet = (c.meetUrl || "").trim();
-    return `<div style="border:1px solid var(--line);border-radius:10px;padding:8px;margin-top:8px"><strong>${esc(course.name || c.courseId)}</strong><br><span class="muted">${isAdmin ? esc(teacherNames[c.teacherId] || "") + "<br>" : ""}${esc(classScheduleText(c.days, c.startTime, c.endTime))}</span><br>${meet ? `<a href="${esc(meet)}" target="_blank" rel="noopener">Entrar a Meet</a>` : `<span class="muted">Sin enlace de Meet</span>`}</div>`;
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:8px;margin-top:8px"><strong>${esc(course.name || c.courseId)}</strong><br><span class="muted">${(isAdmin || isManager) ? esc(teacherNames[c.teacherId] || "") + "<br>" : ""}${esc(classScheduleText(c.days, c.startTime, c.endTime))}</span><br>${meet ? `<a href="${esc(meet)}" target="_blank" rel="noopener">Entrar a Meet</a>` : `<span class="muted">Sin enlace de Meet</span>`}</div>`;
   }).join("") : `<p class="muted">—</p>`}</td>`).join("");
   s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2>
-    <p class="hint">Todas las clases de la semana con su horario y su enlace de Meet.${isAdmin ? " Ves las clases de todas las maestras." : ""}</p>
+    <p class="hint">Todas las clases de la semana con su horario y su enlace de Meet.${(isAdmin || isManager) ? " Ves las clases de todas las maestras." : ""}</p>
     ${shown.length ? `<div class="table-scroll"><table class="students"><tr>${CAL_DAYS.map(d => `<th>${d}</th>`).join("")}</tr><tr>${colHtml}</tr></table></div>` : `<p class="muted">Aún no hay clases registradas. Regístralas en Mis clases.</p>`}
   </div>`;
 }
@@ -1932,7 +1953,7 @@ async function renderTeachers() {
   <div id="teacher-edit-box"></div>
   <div id="teacher-classes-box"></div>
   <div class="card"><h2>Crear cuenta de maestro</h2>
-    <p class="hint">Solo tú puedes crear cuentas. El maestro entra con su correo y esta contraseña; después puede cambiarla en su pestaña Mi cuenta.</p>
+    <p class="hint">${isAdmin ? "Solo tú puedes crear cuentas." : "Como gestora también puedes crear cuentas."} El maestro entra con su correo y esta contraseña; después puede cambiarla en su pestaña Mi cuenta.</p>
     <div class="row">
       <div><label>Nombre del maestro/a</label><input id="nt-name" placeholder="Ej. Mónica Tintos"></div>
       <div><label>Correo</label><input id="nt-email" type="email" placeholder="correo@ejemplo.com"></div>
@@ -1947,12 +1968,12 @@ async function renderTeachers() {
   <div class="card"><h2>Maestros registrados</h2>
     <table><tr><th>Foto</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th>Contraseña</th><th></th></tr>
     ${list.map(t => `<tr><td id="teacher-photo-${t.uid}">${teacherPhotoHtml(t.photoUrl, t.name, 40)}</td><td>${esc(t.name)}</td><td>${esc(t.email)}</td>
-      <td><span class="badge ${t.role === "admin" ? "admin" : "teacher"}">${t.role === "admin" ? "Admin" : "Maestro/a"}</span></td>
+      <td><span class="badge ${t.role === "admin" ? "admin" : "teacher"}">${t.role === "admin" ? "Admin" : t.role === "manager" ? "Gestora" : "Maestro/a"}</span></td>
       <td>${(t.courses || []).map(id => esc(courses[id] ? courses[id].name : id)).join(", ")}</td>
       <td>${(t.courses || []).map(id => `<div style="margin-bottom:6px"><small>${esc(courses[id] ? courses[id].name : id)}</small><br><input type="url" data-teacher="${t.uid}" data-course="${id}" data-field="classroomLink" value="${esc((t.classroomLinks || {})[id] || "")}" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></div>`).join("")}</td>
       <td>${t.active === false ? '<span class="badge off">Desactivado</span>' : "Activo"}</td>
       <td>${t.passwordChangedAt ? "cambiada el " + fmtPassDate(t.passwordChangedAt) : "nunca"}</td>
-      <td>${t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""} <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button>${me.uid === OWNER_UID && t.uid !== me.uid ? ` <button class="small ghost" data-set-admin="${t.uid}">${t.role === "admin" ? "Quitar admin" : "Hacer admin"}</button>` : ""} <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button></td></tr>`).join("")}
+      <td>${isAdmin && t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""}${isAdmin ? ` <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button>` : ""}${me.uid === OWNER_UID && t.uid !== me.uid ? ` <button class="small ghost" data-set-manager="${t.uid}">${t.role === "manager" ? "Quitar gestor" : "Hacer gestor"}</button>` : ""}${isAdmin ? ` <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button>` : ""}</td></tr>`).join("")}
     </table>
   </div>`;
   $("btn-create-teacher").addEventListener("click", async () => {
@@ -2020,27 +2041,33 @@ async function renderTeachers() {
       showErr($("nt-err"), "No se pudo restablecer: " + (e.message || e.code || e));
     } finally { b.disabled = false; }
   }));
-  // Dar o quitar el acceso de administrador a un maestro. El botón solo
-  // lo ve el dueño del portal (OWNER_UID): ningún otro administrador
-  // tiene esta opción. El cambio pasa por el servidor (setTeacherAdmin),
-  // que crea o borra admins/{uid} y actualiza el rol de la ficha; el
-  // cliente nunca escribe en /admins (las reglas lo prohíben).
-  s.querySelectorAll("[data-set-admin]").forEach(b => b.addEventListener("click", async () => {
-    const uid = b.getAttribute("data-set-admin");
+  // Dar o quitar el rol de gestora a un maestro. El botón solo lo ve el
+  // dueño del portal (OWNER_UID): nadie más tiene esta opción. A
+  // diferencia del viejo botón "Hacer admin" (que pasaba por el servidor
+  // con setTeacherAdmin, hoy roto porque la puerta IAM de Cloud Functions
+  // no acepta tokens de Firebase ID), el rol de gestora se escribe
+  // DIRECTO en Firestore con un lote: teachers/{uid}.role y el documento
+  // managers/{uid} que usan las reglas para reconocer a la gestora. Solo
+  // el dueño puede escribir ahí (ver /teachers y /managers en
+  // firestore.rules), así que nadie puede darse el rol solo.
+  s.querySelectorAll("[data-set-manager]").forEach(b => b.addEventListener("click", async () => {
+    const uid = b.getAttribute("data-set-manager");
     const t = byUid[uid];
-    if (me.uid !== OWNER_UID) { showErr($("nt-err"), "Solo el dueño del portal puede cambiar administradores."); return; }
-    if (uid === me.uid) { showErr($("nt-err"), "No puedes cambiar tu propio acceso de administrador."); return; }
-    const makeAdmin = !t || t.role !== "admin";
+    if (me.uid !== OWNER_UID) { showErr($("nt-err"), "Solo el dueño del portal puede cambiar el rol de gestora."); return; }
+    if (uid === me.uid) { showErr($("nt-err"), "No puedes cambiar tu propio rol."); return; }
+    const makeManager = !t || t.role !== "manager";
     const name = t ? t.name : "este maestro";
-    if (!confirm(makeAdmin ? "¿Hacer administradora a " + name + "? Podrá ver a todos los maestros y alumnos, crear cuentas y editar maestros, igual que tú." : "¿Quitarle el acceso de administrador a " + name + "? Volverá a ver solo a sus alumnos.")) return;
+    if (!confirm(makeManager ? "¿Hacer gestora a " + name + "? Podrá ver a todos los alumnos y las clases, crear cuentas y publicar avisos, igual que el administrador, pero no podrá hacer admin ni editar maestros." : "¿Quitarle el rol de gestora a " + name + "? Volverá a ver solo a sus alumnos.")) return;
     showErr($("nt-err"), ""); showOk($("nt-msg"), "");
     b.disabled = true;
     try {
-      await loadFunctionsScript();
-      const fn = firebase.functions().httpsCallable("setTeacherAdmin");
-      await fn({ uid, makeAdmin });
+      const batch = db.batch();
+      batch.update(db.collection("teachers").doc(uid), { role: makeManager ? "manager" : "teacher" });
+      if (makeManager) batch.set(db.collection("managers").doc(uid), { grantedBy: me.uid, grantedAt: firebase.firestore.FieldValue.serverTimestamp() });
+      else batch.delete(db.collection("managers").doc(uid));
+      await batch.commit();
       await renderTeachers();
-      showOk($("nt-msg"), makeAdmin ? name + " ahora es administradora." : "Se le quitó el acceso de administrador a " + name + ".");
+      showOk($("nt-msg"), makeManager ? name + " ahora es gestora." : "Se le quitó el rol de gestora a " + name + ".");
     } catch (e) {
       showErr($("nt-err"), "No se pudo cambiar: " + (e.message || e.code || e));
     } finally { b.disabled = false; }
@@ -2201,7 +2228,7 @@ async function renderAccount() {
   calendarConn = await fetchCalendarConnection(me.uid);
   s.innerHTML = `
   <div class="card"><h2>Mi cuenta</h2>
-    <p><strong>${esc(me.name)}</strong> · ${esc(me.email)} · ${isAdmin ? "Administrador" : "Maestro/a"}</p>
+    <p><strong>${esc(me.name)}</strong> · ${esc(me.email)} · ${isAdmin ? "Administrador" : isManager ? "Gestora" : "Maestro/a"}</p>
     <p class="muted">Último cambio de contraseña: ${fmtPassDate(me.passwordChangedAt)}.</p>
     ${must ? `<p class="err" style="font-weight:600">Tu contraseña fue restablecida por el administrador. Cámbiala ahora por una contraseña tuya.</p>` : ""}
   </div>
@@ -2700,17 +2727,17 @@ async function openTeacherClasses(uid, name) {
 
 async function renderStudents() {
   const s = $("section");
-  let myCourseIds = isAdmin ? Object.keys(courses) : (me.courses || []);
+  let myCourseIds = (isAdmin || isManager) ? Object.keys(courses) : (me.courses || []);
   if (!selCourse || !myCourseIds.includes(selCourse)) selCourse = myCourseIds[0] || "";
   let teachers = [];
-  if (isAdmin) {
+  if (isAdmin || isManager) {
     teachers = (await listTeachers()).filter(t => (t.courses || []).includes(selCourse));
     if (!selTeacher || !teachers.some(t => t.uid === selTeacher)) selTeacher = teachers[0] ? teachers[0].uid : "";
   } else {
     selTeacher = me.uid;
   }
   const course = courses[selCourse] || {};
-  const teacherObj = isAdmin ? teachers.find(t => t.uid === selTeacher) : me;
+  const teacherObj = (isAdmin || isManager) ? teachers.find(t => t.uid === selTeacher) : me;
   driveConn = await fetchDriveConnection(selTeacher);
   // Enlace de Classroom del curso seleccionado: primero el propio del maestro, si no el del curso.
   const classroomLink = ((teacherObj && teacherObj.classroomLinks) || {})[selCourse] || course.classroomUrl || "";
@@ -2725,7 +2752,7 @@ async function renderStudents() {
   const calendar = buildWeekCalendar(selCourse, course.syllabus || []);
   const courseClasses = classesOfCourse(myClasses, selCourse);
   const defClass = defaultClassFor(myClasses, selCourse);
-  const classTeacher = isAdmin ? teacherObj : me;
+  const classTeacher = (isAdmin || isManager) ? teacherObj : me;
   // Clase del filtro ("" = todas) y clase de cada alumno resuelta (con la
   // migración en lectura para los alumnos viejos sin classId).
   if (selClass && !courseClasses.some(c => c.id === selClass)) selClass = "";
@@ -2743,11 +2770,14 @@ async function renderStudents() {
     ? storedToWeekIdx(calendar, editingSt.currentClass)
     : (defClass ? classEffectiveWeekIdx(defClass, myClasses, course) : null);
   const courseOptions = myCourseIds.map(id => `<option value="${id}" ${id === selCourse ? "selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
-  const teacherOptions = isAdmin ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
-  // Aviso de clase pendiente: cuando el admin ve a otra maestra, el
-  // aviso habla de ella por su nombre; cuando se ve a sí mismo (o es
-  // la maestra), habla en segunda persona.
-  const classOwnerIsSelf = !isAdmin || selTeacher === me.uid;
+  const teacherOptions = (isAdmin || isManager) ? teachers.map(t => `<option value="${t.uid}" ${t.uid === selTeacher ? "selected" : ""}>${esc(t.name)}</option>`).join("") : "";
+  // Aviso de clase pendiente: cuando el admin o la gestora ve a otra
+  // maestra, el aviso habla de ella por su nombre; cuando se ve a sí
+  // mismo (o es la maestra), habla en segunda persona.
+  const classOwnerIsSelf = !(isAdmin || isManager) || selTeacher === me.uid;
+  // Solo el admin y el propio maestro registran clases: la gestora ve
+  // las clases de los demás en el Calendario, pero no las gestiona.
+  const canManageClasses = isAdmin || selTeacher === me.uid;
   const classOwnerName = classOwnerIsSelf ? "" : (teacherObj ? teacherObj.name : "Esta maestra");
   const noClassesMsg = classOwnerIsSelf
     ? "Aún no tienes ninguna clase registrada. Primero registra tu clase (curso, días y horario) para poder dar de alta alumnos."
@@ -2756,12 +2786,12 @@ async function renderStudents() {
     ? "Aún no tienes una clase registrada para " + (course.name || "este curso") + ". Regístrala para poder dar de alta alumnos en este curso."
     : classOwnerName + " aún no tiene una clase registrada para " + (course.name || "este curso") + ". Regístrale una para poder dar de alta alumnos en este curso.";
   s.innerHTML = `
-  <div class="card"><h2>${isAdmin ? "Alumnos" : "Mis alumnos"}</h2>
+  <div class="card"><h2>${(isAdmin || isManager) ? "Alumnos" : "Mis alumnos"}</h2>
     <p class="hint">La generación la elige el maestro al dar de alta al alumno (año de graduación). La fecha de inicio y la duración del curso no la determinan.</p>
-    ${!myClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noClassesMsg)}</p><p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : (selCourse && !courseClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noCourseClassMsg)}</p><p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : "")}
+    ${!myClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noClassesMsg)}</p>${canManageClasses ? `<p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : ""}` : (selCourse && !courseClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noCourseClassMsg)}</p>${canManageClasses ? `<p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : ""}` : "")}
     <div class="row">
       <div><label>Curso</label><select id="sel-course">${courseOptions}</select></div>
-      ${isAdmin ? `<div><label>Maestro/a</label><select id="sel-teacher">${teacherOptions}</select></div>` : ""}
+      ${(isAdmin || isManager) ? `<div><label>Maestro/a</label><select id="sel-teacher">${teacherOptions}</select></div>` : ""}
       <div><label>Classroom</label>${classroomLink ? `<button id="btn-classroom" class="gold" style="width:100%">Ir a mi Classroom</button>` : `<span class="muted">Sin enlace de Classroom para este curso</span>`}</div>
     </div>
     <div class="row" style="margin-top:12px">
@@ -2779,7 +2809,7 @@ async function renderStudents() {
       <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
       <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td><td>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</td>
       ${calendar.length ? `<td>${studentProgressCell(st, calendar)}</td>` : ""}
-      <td><button class="small ghost" data-docs="${st.id}">Ver / subir</button></td>
+      <td>${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}</td>
       <td>${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
       ${isAdmin ? `<td>${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</td>` : ""}
       <td><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""}</td></tr>
@@ -2787,16 +2817,16 @@ async function renderStudents() {
       <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></td></tr>`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
     </table></div>
   </div>
-  ${classTeacher ? `<div id="classes-card">${classManagerHtml(classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students })}</div>` : ""}
+  ${classTeacher && canManageClasses ? `<div id="classes-card">${classManagerHtml(classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students })}</div>` : ""}
   <div class="card"><h2>Respaldo en Drive</h2>
     <p class="hint">Cada documento (PDF) que subas tú o tus alumnos se guarda en el portal y, si conectas tu Google Drive, también se copia automáticamente a una carpeta "Gecatech – Respaldo" en tu Drive. Conectar es opcional: sin conexión, tus archivos siguen guardados y visibles aquí.</p>
-    ${DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI" ? `<p class="err">La conexión con Drive aún no está configurada (falta el ID de cliente de Google).</p>` : (driveConn ? `<p>Conectado como <b>${esc(driveConn.email || "tu cuenta de Google")}</b></p>` : `<p class="muted">No conectado — tus archivos se guardan en el portal; la copia en Drive está desactivada.</p>`)}
-    ${driveCardActionsHtml({ isAdmin, isSelf: selTeacher === me.uid, connected: !!driveConn, configured: DRIVE_CLIENT_ID !== "PONER_CLIENT_ID_DRIVE_AQUI", teacherName: esc(teacherObj ? teacherObj.name : "") })}
+    ${DRIVE_CLIENT_ID === "PONER_CLIENT_ID_DRIVE_AQUI" ? `<p class="err">La conexión con Drive aún no está configurada (falta el ID de cliente de Google).</p>` : (driveConn ? `<p>Conectado como <b>${esc(driveConn.email || "tu cuenta de Google")}</b></p>` : ((isAdmin || selTeacher === me.uid) ? `<p class="muted">No conectado — tus archivos se guardan en el portal; la copia en Drive está desactivada.</p>` : `<p class="muted">No puedes ver si esta maestra conectó su Drive.</p>`))}
+    ${driveCardActionsHtml({ isAdmin: isAdmin || isManager, isSelf: selTeacher === me.uid, connected: !!driveConn, configured: DRIVE_CLIENT_ID !== "PONER_CLIENT_ID_DRIVE_AQUI", teacherName: esc(teacherObj ? teacherObj.name : "") })}
     <div id="drive-err" class="err"></div>
   </div>
   ${selCourse ? `<div class="card"><h2>Avisos para este curso</h2>
     <p class="hint">Los alumnos de este curso ven estos avisos en su portal.</p>
-    ${announcements.map(a => `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span><br>${esc(a.text || "")}</div>${(isAdmin || a.teacherId === me.uid) ? `<button class="small ghost" data-del-av="${a.id}" style="color:var(--err)">Eliminar</button>` : ""}</div>`).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
+    ${announcements.map(a => `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span><br>${esc(a.text || "")}</div>${(isAdmin || isManager || a.teacherId === me.uid) ? `<button class="small ghost" data-del-av="${a.id}" style="color:var(--err)">Eliminar</button>` : ""}</div>`).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
     <div class="row" style="margin-top:12px">
       <div><label>Título</label><input id="av-title" placeholder="Ej. Cambio de horario"></div>
     </div>
@@ -2837,7 +2867,7 @@ async function renderStudents() {
   const btnGotoClasses = $("btn-goto-classes");
   if (btnGotoClasses) btnGotoClasses.addEventListener("click", () => { const el = $("classes-card"); if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); const cs = $("cls-course"); if (cs) cs.focus(); } });
   const classesCard = $("classes-card");
-  if (classesCard && classTeacher) bindClassManager(classesCard, classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students, onChanged: async () => { renderStudents(); } });
+  if (classesCard && classTeacher && canManageClasses) bindClassManager(classesCard, classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students, onChanged: async () => { renderStudents(); } });
   const stClaseSel = $("st-clase");
   if (stClaseSel) stClaseSel.addEventListener("change", () => {
     const opt = stClaseSel.options[stClaseSel.selectedIndex];
