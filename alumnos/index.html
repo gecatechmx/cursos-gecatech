@@ -3,18 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;900&display=swap" rel="stylesheet">
 <title>Portal Alumnos — Gecatech</title>
 <style>
-  :root { --navy:#033e6e; --navy2:#046cc4; --blue:#046cc4; --gold:#f4bc04; --gold-dark:#d9a800; --gold-soft:#fdf3ce; --bg:#f6f8fa; --card:#fff; --text:#3c3c3c; --muted:#5c6670; --line:#e2e7ec; --ok:#4a7003; --err:#d41c14; }
+  :root { --navy:#033e6e; --navy2:#046cc4; --blue:#046cc4; --gold:#f4bc04; --gold-dark:#d9a800; --gold-soft:#fdf3ce; --bg:#f6f8fa; --card:#fff; --text:#3c3c3c; --muted:#5c6670; --line:#e2e7ec; --ok:#4a7003; --err:#d41c14; --shadow:0 2px 4px rgba(2,32,56,.10), 0 18px 38px rgba(2,32,56,.22); }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
-  header.top { background:var(--navy); color:#fff; padding:12px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:3px solid var(--gold); box-shadow:0 2px 10px rgba(3,62,110,.18); }
-  header.top img { height:46px; width:auto; background:#fff; border-radius:10px; padding:3px 7px; box-shadow:0 1px 5px rgba(0,0,0,.28); }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:linear-gradient(180deg,#02182e 0%,#033e6e 30%,#0a4d80 58%,#032f52 100%); background-attachment:fixed; color:var(--text); }
+  .watermark { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:-1; }
+  .watermark img { width:min(60vw,520px); height:auto; opacity:.07; }
+  h1, h2, h3 { font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  header.top h1, .card h2 { font-weight:900; }
+  .card h3, h3 { font-weight:700; }
+  header.top { background:linear-gradient(120deg,#022741 0%,var(--navy) 45%,var(--navy2) 100%); color:#fff; padding:14px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:3px solid var(--gold); box-shadow:0 2px 10px rgba(3,62,110,.18); }
+  header.top img { height:52px; width:auto; background:#fff; border-radius:10px; padding:3px 7px; box-shadow:0 1px 5px rgba(0,0,0,.28); }
   header.top h1 { font-size:20px; margin:0; letter-spacing:.3px; }
   header.top small { color:#d7e6f2; display:block; font-size:12px; letter-spacing:.3px; }
   header.top .spacer { flex:1; }
   header.top .user { font-size:13px; color:#cfe0ee; text-align:right; }
-  button { background:var(--navy); color:#fff; border:0; border-radius:10px; padding:10px 16px; font-size:15px; font-weight:600; letter-spacing:.2px; cursor:pointer; box-shadow:0 1px 3px rgba(3,62,110,.16); }
+  button { background:var(--navy); color:#fff; border:0; border-radius:10px; padding:10px 16px; font-size:15px; font-weight:600; letter-spacing:.2px; cursor:pointer; box-shadow:0 1px 3px rgba(3,62,110,.16); font-family:inherit; }
   button:hover { background:var(--blue); }
   button.gold { background:var(--gold); color:#231f00; font-weight:700; }
   button.gold:hover { background:var(--gold-dark); }
@@ -28,7 +36,7 @@
   input:focus, select:focus, textarea:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(4,108,196,.16); outline:none; }
   label { display:block; font-size:13px; font-weight:600; color:var(--muted); margin:14px 0 4px; }
   .wrap { max-width:980px; margin:0 auto; padding:16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin:14px 0; box-shadow:0 1px 2px rgba(3,62,110,.05), 0 10px 28px rgba(3,62,110,.07); }
+  .card { background:var(--card); border:1px solid #d7e2ec; border-radius:18px; padding:20px 22px; margin:14px 0; box-shadow:var(--shadow); }
   .card h2 { margin:0 0 8px; font-size:19px; letter-spacing:.2px; color:var(--navy); }
   .card h3 { margin:16px 0 6px; font-size:16px; }
   .card p.hint { color:var(--muted); font-size:14px; margin:4px 0 10px; }
@@ -45,6 +53,20 @@
   .docline { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .docline a { color:var(--navy); }
   .hidden { display:none !important; }
+  .ic { width:20px; height:20px; flex:none; vertical-align:-4px; margin-right:7px; color:var(--navy2); }
+  /* ---------- Mi próxima clase ---------- */
+  .hero-class { background:linear-gradient(130deg,#022741 0%,var(--navy) 50%,var(--navy2) 100%); color:#fff; border-radius:20px; padding:26px 28px; margin:16px 0; box-shadow:var(--shadow); border-bottom:4px solid var(--gold); }
+  .hero-class h2 { color:#fff; font-size:24px; margin:0 0 2px; font-weight:900; }
+  .hero-class h2 .ic { color:var(--gold); }
+  .hero-course { font-size:19px; font-weight:700; color:var(--gold); margin:0 0 4px; }
+  .hero-meta { color:#d7e6f2; margin:0 0 16px; font-size:14px; }
+  .cd { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 18px; }
+  .cd div { background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.22); border-radius:12px; padding:8px 14px; text-align:center; min-width:70px; }
+  .cd strong { display:block; font-size:24px; font-weight:900; line-height:1.1; font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  .cd span { font-size:12px; color:#cfe0ee; text-transform:uppercase; letter-spacing:.6px; }
+  .hero-class a.btn.big { font-size:16px; padding:13px 22px; }
+  .hero-note { color:#cfe0ee; font-size:13px; margin:10px 0 0; }
+  @media (max-width:720px){ .hero-class { padding:20px; } }
 </style>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -52,6 +74,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 </head>
 <body>
+<div class="watermark" aria-hidden="true"><img id="watermark-logo" alt="" onerror="this.style.display='none'"></div>
 
 <div id="view-login" class="wrap">
   <div class="card login-box">
@@ -91,6 +114,7 @@ const LOGO_URL = "/logo-gecatech.jpg";
 const LOGO_DATA_URL = LOGO_URL;
 document.getElementById('login-logo').src = LOGO_DATA_URL;
 document.getElementById('app-logo').src = LOGO_DATA_URL;
+document.getElementById('watermark-logo').src = LOGO_DATA_URL;
 
 const firebaseConfig = {
   apiKey: "AIzaSyDTvUXG5wCIFKy7dVD5RhOhMRRrj8B6a5g",
@@ -249,6 +273,90 @@ function isClassToday(schedule) {
   const found = norm.match(/\b(domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/g) || [];
   return found.includes(days[new Date().getDay()]);
 }
+
+// ---------- Mi próxima clase ----------
+// Saca los días y la hora de inicio del horario del alumno
+// ("Martes 8-10 p. m.", "Lunes 9:30-11:30 p. m.", "Martes 20:00–22:00").
+// null si el horario no tiene día ni hora claros ("Varios horarios").
+const WEEKDAYS = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 };
+function parseSchedule(schedule) {
+  const norm = String(schedule || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const dayNames = norm.match(/\b(domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/g) || [];
+  if (!dayNames.length) return null;
+  const days = [...new Set(dayNames.map(d => WEEKDAYS[d]))];
+  const t = norm.replace(/[–—]/g, "-").replace(/\./g, "").replace(/\bp\s*m\b/g, "pm").replace(/\ba\s*m\b/g, "am");
+  const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/.exec(t);
+  if (!m) return null;
+  let h1 = +m[1];
+  const min1 = m[2] ? +m[2] : 0;
+  const ap = m[3] || m[6] || null;
+  if (ap === "pm" && h1 < 12) h1 += 12;
+  if (ap === "am" && h1 === 12) h1 = 0;
+  if (h1 > 23) return null;
+  return { days, hour: h1, minute: min1 };
+}
+// La siguiente fecha/hora en que toca clase según el horario, desde `from`.
+function nextOccurrence(sched, from) {
+  let best = null;
+  for (const d of sched.days) {
+    const t = new Date(from.getFullYear(), from.getMonth(), from.getDate(), sched.hour, sched.minute, 0);
+    t.setDate(t.getDate() + ((d - from.getDay() + 7) % 7));
+    if (t <= from) t.setDate(t.getDate() + 7);
+    if (!best || t < best) best = t;
+  }
+  return best;
+}
+// La próxima clase entre todos los cursos del alumno (la más cercana).
+function buildNextClass(list, courses) {
+  const now = new Date();
+  let best = null;
+  for (const st of list) {
+    const course = courses[st.courseId] || {};
+    const sched = parseSchedule((st.classLabel || "").trim() || course.schedule);
+    if (!sched) continue;
+    const target = nextOccurrence(sched, now);
+    if (!target) continue;
+    if (!best || target < best.target) best = { st, course, sched, target };
+  }
+  return best;
+}
+let cdTimer = null;
+let nextClassInfo = null;
+function stopCountdown() { if (cdTimer) { clearInterval(cdTimer); cdTimer = null; } }
+function tickCountdown() {
+  const info = nextClassInfo;
+  if (!info) return;
+  const el = (id) => document.getElementById(id);
+  if (!el("cd-d")) { stopCountdown(); return; }
+  let diff = info.target - new Date();
+  if (diff <= 0) { // la clase ya empezó: la cuenta regresiva pasa a la siguiente
+    info.target = nextOccurrence(info.sched, new Date());
+    diff = info.target - new Date();
+  }
+  el("cd-d").textContent = Math.floor(diff / 864e5);
+  el("cd-h").textContent = Math.floor(diff / 36e5) % 24;
+  el("cd-m").textContent = Math.floor(diff / 6e4) % 60;
+  el("cd-s").textContent = Math.floor(diff / 1e3) % 60;
+}
+function renderNextClassHero() {
+  const info = nextClassInfo;
+  const box = document.getElementById("next-class");
+  if (!box || !info) return;
+  const meetUrl = classMeetUrlOf(info.st);
+  const scheduleText = ((info.st.classLabel || "").trim() || info.course.schedule || "");
+  box.innerHTML = `<section class="hero-class">
+    <h2><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-2.8v8.6l-5-2.8"/></svg>Mi próxima clase</h2>
+    <p class="hero-course">${esc(info.course.name || "Curso")}</p>
+    <p class="hero-meta">${esc(scheduleText)} · Clase en línea por Google Meet · Todas las clases se graban</p>
+    <div class="cd" aria-label="Cuenta regresiva para la próxima clase">
+      <div><strong id="cd-d">–</strong><span>días</span></div>
+      <div><strong id="cd-h">–</strong><span>horas</span></div>
+      <div><strong id="cd-m">–</strong><span>min</span></div>
+      <div><strong id="cd-s">–</strong><span>seg</span></div>
+    </div>
+    ${meetUrl ? `<a class="btn gold big" target="_blank" rel="noopener" href="${esc(meetUrl)}">Entrar a mi clase</a>` : `<p class="hero-note">El enlace de Meet de esta clase aún no está disponible.</p>`}
+  </section>`;
+}
 function teacherPhotoHtml(url, name) {
   const initial = ((name || "?").trim().charAt(0) || "?").toUpperCase();
   if (url) return `<img src="${esc(url)}" alt="" style="width:40px;height:40px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px">`;
@@ -276,6 +384,7 @@ function classMeetUrlOf(st) {
   return (st && st.classMeetUrl ? String(st.classMeetUrl) : "").trim();
 }
 async function enterApp() {
+  stopCountdown();
   $("view-login").classList.add("hidden");
   $("view-app").classList.remove("hidden");
   const s = $("section");
@@ -317,7 +426,12 @@ async function enterApp() {
     const snap = await db.collection("diplomas").get();
     snap.forEach(d => { diplomasCatalog[d.id] = d.data().name || ""; });
   } catch (e) { diplomasCatalog = {}; }
-  s.innerHTML = list.map(st => {
+  // Tarjeta destacada "Mi próxima clase": la siguiente clase de cualquiera
+  // de sus cursos, con cuenta regresiva en vivo y su enlace de Meet.
+  // Solo aparece si al menos un curso tiene un horario con día y hora.
+  nextClassInfo = buildNextClass(list, courses);
+  const heroSlot = nextClassInfo ? `<div id="next-class"></div>` : "";
+  s.innerHTML = heroSlot + list.map(st => {
     const course = courses[st.courseId] || {};
     const contact = teacherContact(course, st);
     const teacherLabel = contact ? contact.label : "Tu maestro/a";
@@ -372,6 +486,7 @@ async function enterApp() {
       <div id="docs-${st.id}"><p class="muted">Cargando documentos…</p></div>
     </div>`;
   }).join("");
+  if (nextClassInfo) { renderNextClassHero(); tickCountdown(); cdTimer = setInterval(tickCountdown, 1000); }
   for (const st of list) renderDocs($("docs-" + st.id), st);
 }
 
