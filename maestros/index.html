@@ -4,13 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal Maestros — Gecatech</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800;900&display=swap" rel="stylesheet">
 <style>
-  :root { --navy:#033e6e; --navy2:#046cc4; --blue:#046cc4; --gold:#f4bc04; --gold-dark:#d9a800; --gold-soft:#fdf3ce; --bg:#f6f8fa; --card:#fff; --text:#3c3c3c; --muted:#5c6670; --line:#e2e7ec; --ok:#4a7003; --err:#d41c14; }
+  :root { --navy:#033e6e; --navy2:#046cc4; --blue:#046cc4; --gold:#f4bc04; --gold-dark:#d9a800; --gold-soft:#fdf3ce; --bg:#f6f8fa; --card:#fff; --text:#3c3c3c; --muted:#5c6670; --line:#e2e7ec; --ok:#4a7003; --err:#d41c14; --c-ind:#046cc4; --c-adm:#15803d; --c-rrhh:#7c3aed; --c-asi:#0f766e; --c-psi:#db2777; --c-esp:#b45309; --warn-bg:#fdeecb; --warn-tx:#7a5c00; --bad-bg:#fbe3e1; --bad-tx:#8f1408; --shadow:0 2px 4px rgba(2,32,56,.10), 0 18px 38px rgba(2,32,56,.22); }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:linear-gradient(180deg,#02182e 0%,#033e6e 30%,#0a4d80 58%,#032f52 100%); background-attachment:fixed; color:var(--text); }
+  h1, h2, h3 { font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  header.top h1, .card h2 { font-weight:900; }
+  .card h3 { font-weight:700; }
   .watermark { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:-1; }
   .watermark img { width:min(60vw,520px); height:auto; opacity:.07; }
-  header.top { background:var(--navy); color:#fff; padding:12px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:3px solid var(--gold); box-shadow:0 2px 10px rgba(3,62,110,.18); }
+  header.top { background:linear-gradient(120deg,#022741 0%,var(--navy) 45%,var(--navy2) 100%); color:#fff; padding:12px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:3px solid var(--gold); box-shadow:0 2px 10px rgba(3,62,110,.18); }
   header.top img { height:46px; width:auto; background:#fff; border-radius:10px; padding:3px 7px; box-shadow:0 1px 5px rgba(0,0,0,.28); }
   header.top h1 { font-size:20px; margin:0; letter-spacing:.3px; }
   header.top small { color:#d7e6f2; display:block; font-size:12px; letter-spacing:.3px; }
@@ -27,15 +33,70 @@
   input, select, textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; font-size:15px; background:#fff; color:var(--text); }
   input:focus, select:focus, textarea:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(4,108,196,.16); outline:none; }
   label { display:block; font-size:13px; font-weight:600; color:var(--muted); margin:14px 0 4px; }
-  .wrap { max-width:980px; margin:0 auto; padding:16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin:14px 0; box-shadow:0 1px 2px rgba(3,62,110,.05), 0 10px 28px rgba(3,62,110,.07); }
+  .wrap { max-width:1200px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid #d7e2ec; border-radius:18px; padding:20px 22px; margin:14px 0; box-shadow:var(--shadow); }
   .card h2 { margin:0 0 8px; font-size:19px; letter-spacing:.2px; color:var(--navy); }
   .card p.hint { color:var(--muted); font-size:14px; margin:4px 0 10px; }
   .row { display:flex; gap:10px; flex-wrap:wrap; }
   .row > * { flex:1; min-width:160px; }
-  .tabs { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 0; }
-  .tabs button { background:#e8edf1; color:var(--navy); border-radius:999px; padding:9px 18px; box-shadow:none; }
-  .tabs button.active { background:var(--navy); color:#fff; box-shadow:0 2px 8px rgba(3,62,110,.28); }
+  .session-note { color:#d7e6f2; font-size:13px; }
+  /* ---------- Menú lateral / barra inferior (reorganización v10) ---------- */
+  .portal-layout { display:grid; grid-template-columns:232px minmax(0,1fr); gap:18px; align-items:start; margin-top:16px; }
+  .side-nav { position:sticky; top:16px; background:linear-gradient(160deg,#022741 0%,var(--navy) 55%,var(--navy2) 100%); border-radius:18px; padding:14px 12px; box-shadow:var(--shadow); border-bottom:3px solid var(--gold); display:flex; flex-direction:column; gap:6px; z-index:40; }
+  .side-title { color:#cfe0ee; font-size:12px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; margin:2px 8px 8px; font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  .side-nav button { display:flex; align-items:center; gap:10px; width:100%; background:transparent; color:#eaf2f9; box-shadow:none; border-radius:12px; padding:11px 12px; font-size:15px; text-align:left; }
+  .side-nav button:hover { background:rgba(255,255,255,.14); }
+  .side-nav button.active { background:var(--gold); color:#231f00; box-shadow:0 4px 14px rgba(244,188,4,.35); }
+  .side-nav button svg { width:21px; height:21px; flex:none; }
+  .side-nav button .side-tag { margin-left:auto; font-style:normal; font-size:10px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; background:rgba(255,255,255,.18); border-radius:999px; padding:2px 7px; }
+  .side-nav button.active .side-tag { background:rgba(35,31,0,.14); }
+  .side-note { color:#a9c4da; font-size:12px; margin:10px 8px 2px; }
+  .portal-main { min-width:0; }
+  .portal-main #section > .card:first-child { margin-top:0; }
+  /* ---------- Inicio ---------- */
+  .home-band { background:linear-gradient(130deg,#022741 0%,var(--navy) 50%,var(--navy2) 100%); border-bottom:3px solid var(--gold); border-radius:16px; padding:16px 18px; margin-bottom:14px; box-shadow:var(--shadow); }
+  .home-head { color:#fff; font-size:24px; margin:0 0 2px; font-weight:900; }
+  .home-sub { color:#cfe0ee; margin:0; font-size:14px; }
+  .home-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
+  .home-card { background:#fff; border:1px solid #d7e2ec; border-radius:16px; padding:16px 18px; box-shadow:0 2px 4px rgba(2,32,56,.08), 0 12px 26px rgba(2,32,56,.13); display:flex; flex-direction:column; gap:7px; }
+  .home-kicker { color:var(--navy); font-size:11px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; }
+  .home-num { font-size:19px; font-weight:900; color:var(--navy); font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  .home-txt { color:var(--muted); font-size:14px; }
+  .home-actions { margin-top:auto; }
+  .home-next { grid-column:span 2; background:linear-gradient(130deg,#022741 0%,var(--navy) 50%,var(--navy2) 100%); color:#fff; border:0; border-bottom:3px solid var(--gold); flex-direction:row; align-items:center; gap:14px; flex-wrap:wrap; }
+  .home-next .home-body { flex:1; min-width:200px; display:flex; flex-direction:column; gap:2px; }
+  .home-next .home-kicker { color:var(--gold); }
+  .home-next strong { font-size:19px; font-weight:900; font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  .home-next .home-txt { color:#cfe0ee; }
+  /* ---------- Alumnos: cuadrícula de tarjetas, iniciales y color por curso ---------- */
+  .students-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; margin-top:12px; }
+  .student-card { background:#fff; border:1px solid #d7e2ec; border-radius:16px; padding:16px 18px; box-shadow:0 2px 4px rgba(2,32,56,.08), 0 12px 26px rgba(2,32,56,.13); display:flex; flex-direction:column; gap:12px; }
+  .st-head { display:flex; align-items:center; gap:12px; }
+  .st-title { min-width:0; }
+  .st-name { font-size:16px; font-weight:800; color:var(--navy); font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  .st-ini { display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; border-radius:50%; color:#fff; font-weight:800; font-size:18px; flex:none; }
+  .st-course { font-size:13px; font-weight:700; }
+  .st-meta { margin:0; display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; }
+  .st-meta > div:first-child { grid-column:1 / -1; }
+  .st-meta dt { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
+  .st-meta dd { margin:0; font-size:14px; font-weight:600; color:var(--text); word-break:break-word; }
+  .st-account { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .st-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .st-ficha { border-top:1px solid var(--line); padding-top:12px; display:flex; flex-direction:column; gap:14px; }
+  .st-ficha-sec h4 { margin:0 0 8px; font-size:15px; font-weight:700; color:var(--navy); font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
+  .badge.warnb { background:var(--warn-bg); color:var(--warn-tx); }
+  .badge.badb { background:var(--bad-bg); color:var(--bad-tx); }
+  .ic { width:20px; height:20px; flex:none; vertical-align:-4px; margin-right:7px; color:var(--navy2); }
+  @media (max-width:860px) {
+    .portal-layout { grid-template-columns:1fr; }
+    .side-nav { position:fixed; top:auto; bottom:0; left:0; right:0; flex-direction:row; border-radius:0; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); gap:2px; border-bottom:0; border-top:3px solid var(--gold); }
+    .side-title, .side-note { display:none; }
+    .side-nav button { flex:1; flex-direction:column; gap:3px; padding:7px 2px; font-size:10px; text-align:center; justify-content:center; }
+    .side-nav button svg { width:20px; height:20px; }
+    .side-nav button .side-tag { display:none; }
+    body { padding-bottom:82px; }
+    .home-next { grid-column:span 1; }
+  }
   table { width:100%; border-collapse:collapse; font-size:14px; margin-top:10px; }
   .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   @media (max-width:640px) {
@@ -44,8 +105,6 @@
     .students.show-all th:nth-child(2), .students.show-all td:nth-child(2),
     .students.show-all th:nth-child(3), .students.show-all td:nth-child(3) { display:table-cell; }
   }
-  #btn-toggle-cols { display:none; }
-  @media (max-width:640px) { #btn-toggle-cols { display:inline-block; } }
   th, td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:left; vertical-align:top; }
   th { color:var(--navy); font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
@@ -104,9 +163,11 @@
     <button class="ghost small" id="btn-logout">Salir</button>
   </header>
   <div class="wrap">
-    <p class="muted">Por seguridad, tu sesión se cierra si pasas 5 minutos sin usar el portal.</p>
-    <div class="tabs" id="tabs"></div>
-    <div id="section"></div>
+    <p class="session-note">Por seguridad, tu sesión se cierra si pasas 5 minutos sin usar el portal.</p>
+    <div class="portal-layout">
+      <nav class="side-nav" id="tabs" aria-label="Secciones del portal"></nav>
+      <div class="portal-main"><div id="section"></div></div>
+    </div>
   </div>
 </div>
 
@@ -201,10 +262,9 @@ const OWNER_UID = "K8wtJKKNkkg1Pv9bmBxxlgdpdSG3"; // UID de Auth de Anghelo,
                         // de administrador quedó solo para el dueño (el
                         // botón "Hacer admin" ya no existe).
 let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
-let currentTab = "alumnos";
+let currentTab = "inicio";
 let selCourse = "";
 let selTeacher = "";
-let showAllCols = false;
 let editingStudentId = null;
 let suggestedStudentId = ""; // siguiente ID de alumno disponible (GEC-0001…), se calcula en renderStudents
 let selClass = "";        // filtro de clase en Alumnos ("" = todas las clases)
@@ -415,23 +475,55 @@ function enterApp() {
   $("user-chip").innerHTML = esc(me.name) + "<br>" + (isAdmin ? "Administrador" : isManager ? "Gestora" : "Maestro/a");
   const tabs = $("tabs");
   tabs.innerHTML = "";
+  // Iconos SVG del menú lateral (los de la vista previa aprobada).
+  const NAV_ICONS = {
+    inicio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/><path d="M9.5 20v-5.5h5V20"/></svg>',
+    alumnos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19.5c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6"/><path d="M15.5 5.4a3.2 3.2 0 0 1 0 5.9"/><path d="M17.8 15.3c1.5.6 2.4 1.9 2.7 4.2"/></svg>',
+    clases: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M12 12.5V15l2 1.2"/></svg>',
+    avisos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.6 3.2H4.4z"/><path d="M10 21a2.2 2.2 0 0 0 4 0"/></svg>',
+    maestros: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c.8-3.6 3.7-5.4 7.5-5.4s6.7 1.8 7.5 5.4"/></svg>',
+    cursos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6c-1.5-1.2-3.5-1.8-6-1.8v13c2.5 0 4.5.6 6 1.8 1.5-1.2 3.5-1.8 6-1.8v-13c-2.5 0-4.5.6-6 1.8z"/><path d="M12 6v12.8"/></svg>',
+    cuenta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h9M19 8h1M4 16h3M11 16h9"/><circle cx="16" cy="8" r="2.2"/><circle cx="9" cy="16" r="2.2"/></svg>'
+  };
+  // Menú lateral (en el celular, barra inferior): mismo orden para todos;
+  // solo cambian las secciones de administración según el rol. La gestora
+  // ve Maestros pero no Cursos y Diplomados; un maestro normal no ve
+  // ninguna de las dos.
   const defs = isAdmin
-    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["cursos", "Cursos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]]
+    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["cursos", "Cursos y Diplomados", "ADMIN"], ["cuenta", "Mi cuenta", ""]]
     : isManager
-    ? [["alumnos", "Alumnos"], ["maestros", "Maestros"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]]
-    : [["alumnos", "Mis alumnos"], ["classroom", "Classroom"], ["calendario", "Calendario"], ["cuenta", "Mi cuenta"]];
-  defs.forEach(([id, label]) => {
+    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["cuenta", "Mi cuenta", ""]]
+    : [["inicio", "Inicio", ""], ["alumnos", "Mis alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["cuenta", "Mi cuenta", ""]];
+  const sideTitle = document.createElement("p");
+  sideTitle.className = "side-title";
+  sideTitle.textContent = "Menú";
+  tabs.appendChild(sideTitle);
+  defs.forEach(([id, label, tag]) => {
     const b = document.createElement("button");
-    b.textContent = label;
+    b.type = "button";
+    b.innerHTML = (NAV_ICONS[id] || "") + "<span>" + label + "</span>" + (tag ? '<em class="side-tag">' + tag + "</em>" : "");
     b.className = currentTab === id ? "active" : "";
     b.addEventListener("click", () => { currentTab = id; enterApp(); });
     tabs.appendChild(b);
   });
+  if (isAdmin || isManager) {
+    const note = document.createElement("p");
+    note.className = "side-note";
+    note.textContent = "Maestros y Cursos y Diplomados son secciones de administración: solo las ven el administrador y la gestora según su rol.";
+    tabs.appendChild(note);
+  }
+  // Si se navegó mientras "Mis clases" aún cargaba, la sección real pudo
+  // quedar con su id temporal: se restaura antes de dibujar la sección.
+  const secEl = document.getElementById("section") || document.getElementById("section-real");
+  if (secEl) secEl.id = "section";
   renderSection();
 }
 async function renderSection() {
   try {
-    if (currentTab === "maestros") await renderTeachers();
+    if (currentTab === "inicio") await renderInicio();
+    else if (currentTab === "clases") await renderClasses();
+    else if (currentTab === "avisos") await renderAvisos();
+    else if (currentTab === "maestros") await renderTeachers();
     else if (currentTab === "cursos") await renderCourses();
     else if (currentTab === "classroom") await renderClassroom();
     else if (currentTab === "calendario") await renderCalendar();
@@ -441,6 +533,227 @@ async function renderSection() {
     const s = $("section");
     if (s) s.innerHTML = `<div class="card"><h2>No se pudo cargar esta sección</h2><p class="err">${esc(e.message || e)}</p><p class="hint">Intenta recargar la página. Si el error sigue, avisa al administrador.</p></div>`;
   }
+}
+
+// ---------- Inicio (resumen) · v10 ----------
+// Iniciales de un nombre ("Mónica Tintos" -> "MT").
+function initialsOf(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "—";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+// Color del curso por su nombre: un color distinto por curso, con buen
+// contraste sobre blanco (texto del nombre) y con letras blancas (círculo
+// de iniciales). Se usa el curso propio de cada alumno, no el del filtro,
+// para que cada tarjeta lleve el color de su curso.
+function courseColorByName(name) {
+  const n = String(name || "").toLowerCase();
+  if (n.includes("industrial")) return "#046cc4";
+  if (n.includes("administrativo")) return "#15803d";
+  if (n.includes("recursos")) return "#7c3aed";
+  if (n.includes("asistente")) return "#0f766e";
+  if (n.includes("psicolog")) return "#db2777";
+  if (n.includes("especial")) return "#b45309";
+  let h = 0;
+  for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0;
+  return ["#046cc4", "#15803d", "#7c3aed", "#0f766e", "#db2777", "#b45309"][h % 6];
+}
+// Próxima clase (la más cercana a partir de ahora) entre las clases visibles
+// del maestro, o de todas las maestras si es admin o gestora.
+async function nextClassInfo() {
+  let all = [];
+  let teacherNames = {};
+  try {
+    if (isAdmin || isManager) {
+      const snap = await db.collection("classes").get();
+      snap.forEach(d => all.push({ id: d.id, ...d.data() }));
+      (await listTeachers()).forEach(t => { teacherNames[t.uid] = t.name; });
+    } else {
+      all = await fetchClasses(me.uid);
+      teacherNames[me.uid] = me.name;
+    }
+  } catch (e) { return null; }
+  const now = new Date();
+  let best = null;
+  (all || []).filter(c => c && c.active !== false && Array.isArray(c.days)).forEach(c => {
+    (c.days || []).forEach(d => {
+      if (d < 0 || d > 6) return;
+      const parts = String(c.startTime || "00:00").split(":");
+      const hh = parseInt(parts[0], 10) || 0;
+      const mm = parseInt(parts[1], 10) || 0;
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+      const diff = (d - now.getDay() + 7) % 7;
+      dt.setDate(dt.getDate() + diff);
+      if (dt <= now) dt.setDate(dt.getDate() + 7);
+      if (!best || dt < best.date) best = { date: dt, cls: c };
+    });
+  });
+  if (!best) return null;
+  const course = courses[best.cls.courseId] || {};
+  return { date: best.date, cls: best.cls, courseName: course.name || best.cls.courseId, teacherName: teacherNames[best.cls.teacherId] || "", meetUrl: (best.cls.meetUrl || "").trim() };
+}
+// Tareas por revisar en Classroom: entregas en estado TURNED_IN sin nota
+// asignada. null si Classroom no está conectado o no se pudo contar.
+async function countPendingGrading() {
+  try {
+    if (!classroomToken) { try { await refreshClassroomToken(); } catch (e) {} }
+    if (!classroomToken) return null;
+    const data = await classroomFetch("/courses?teacherId=me&pageSize=50");
+    const crs = (data.courses || []).slice(0, 10);
+    let n = 0;
+    for (const c of crs) {
+      try {
+        const w = await classroomFetch("/courses/" + encodeURIComponent(c.id) + "/courseWork?pageSize=50&courseWorkStates=PUBLISHED");
+        for (const work of (w.courseWork || [])) {
+          try {
+            const subs = await classroomFetch("/courses/" + encodeURIComponent(c.id) + "/courseWork/" + encodeURIComponent(work.id) + "/studentSubmissions?pageSize=100");
+            (subs.studentSubmissions || []).forEach(sub => { if (sub.state === "TURNED_IN" && sub.assignedGrade == null) n++; });
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    return n;
+  } catch (e) { return null; }
+}
+async function renderInicio() {
+  const s = $("section");
+  const who = isAdmin ? "Administrador" : isManager ? "Gestora" : "Maestro/a";
+  const next = await nextClassInfo();
+  let studentCount = null;
+  try { const ids = await fetchExistingStudentIds(); if (ids) studentCount = ids.length; } catch (e) {}
+  const myCourseIds = (isAdmin || isManager) ? Object.keys(courses) : (me.courses || []);
+  let avTotal = 0;
+  let latestAv = null;
+  for (const cid of myCourseIds) {
+    try {
+      const list = await fetchAnnouncements(cid);
+      avTotal += list.length;
+      if (list.length && (!latestAv || tsMillis(list[0].createdAt) > tsMillis(latestAv.createdAt))) latestAv = list[0];
+    } catch (e) {}
+  }
+  const pendingTasks = await countPendingGrading();
+  const nextLine = next
+    ? DAYS_ES[next.date.getDay()] + " " + String(next.date.getHours()).padStart(2, "0") + ":" + String(next.date.getMinutes()).padStart(2, "0") + " · " + next.courseName
+    : "Sin próxima clase";
+  const nextSub = next
+    ? next.courseName + " · " + classScheduleText(next.cls.days, next.cls.startTime, next.cls.endTime) + (next.teacherName && (isAdmin || isManager) ? " · " + next.teacherName : "")
+    : "Aún no hay clases registradas.";
+  const studentsTxt = studentCount === null
+    ? "No se pudo contar a tus alumnos en este momento."
+    : (studentCount === 1 ? "1 alumno" : studentCount + " alumnos") + ((isAdmin || isManager) ? " en toda la escuela." : " en tus cursos.");
+  const tasksTxt = pendingTasks === null
+    ? "Conecta Classroom para ver tus tareas por revisar."
+    : pendingTasks === 0 ? "No tienes entregas pendientes de calificar." : pendingTasks === 1 ? "1 entrega pendiente de calificar." : pendingTasks + " entregas pendientes de calificar.";
+  const avTxt = latestAv
+    ? esc(latestAv.title || "Aviso") + " · " + fmtAvDate(latestAv.createdAt)
+    : "Aún no hay avisos publicados.";
+  s.innerHTML = `
+  <div class="home-band"><h2 class="home-head">Inicio</h2><p class="home-sub">Hola, ${esc(me.name || "")} (${esc(who)}): tu día de un vistazo, sin buscar en cada sección.</p></div>
+  <div class="home-grid">
+    <article class="home-card home-next">
+      <div class="home-body"><span class="home-kicker">Próxima clase</span><strong>${esc(nextLine)}</strong><span class="home-txt">${esc(nextSub)}</span></div>
+      ${next && next.meetUrl ? `<a class="btn gold" href="${esc(next.meetUrl)}" target="_blank" rel="noopener">Entrar a Meet</a>` : ""}
+      <button class="gold" type="button" data-goto="${next ? "clases" : "alumnos"}">${next ? "Ir a Mis clases" : "Registrar una clase"}</button>
+    </article>
+    <article class="home-card"><span class="home-kicker">Mis alumnos</span><strong class="home-num">${studentCount === null ? "—" : studentCount + (studentCount === 1 ? " alumno" : " alumnos")}</strong><span class="home-txt">${esc(studentsTxt)}</span><div class="home-actions"><button class="small" type="button" data-goto="alumnos">Ver Mis alumnos</button></div></article>
+    <article class="home-card"><span class="home-kicker">Classroom</span><strong class="home-num">${pendingTasks === null ? "Sin conexión" : pendingTasks + (pendingTasks === 1 ? " tarea por revisar" : " tareas por revisar")}</strong><span class="home-txt">${esc(tasksTxt)}</span><div class="home-actions"><button class="small" type="button" data-goto="clases">Revisar tareas</button></div></article>
+    <article class="home-card"><span class="home-kicker">Pagos</span><strong class="home-num">En la ficha del alumno</strong><span class="home-txt">Este portal no lleva el registro de pagos: se revisa en la ficha de cada alumno, en Mis alumnos.</span><div class="home-actions"><button class="small" type="button" data-goto="alumnos">Ver pagos</button></div></article>
+    <article class="home-card"><span class="home-kicker">Avisos</span><strong class="home-num">${avTotal === 0 ? "Sin avisos" : avTotal + (avTotal === 1 ? " aviso" : " avisos")}</strong><span class="home-txt">${avTxt}</span><div class="home-actions"><button class="small" type="button" data-goto="avisos">Ver Avisos</button></div></article>
+  </div>`;
+  s.querySelectorAll("[data-goto]").forEach(b => b.addEventListener("click", () => { currentTab = b.getAttribute("data-goto"); enterApp(); }));
+}
+
+// ---------- Mis clases: Calendario + Classroom juntos · v10 ----------
+// Calendario y Classroom escriben en $("section"): se les presta por turnos
+// un contenedor propio con el id "section" y luego se restaura. La conexión
+// de Classroom se comprueba ANTES, para que renderClassroom() no se
+// re-invoque solo después (esa re-invocación escribiría en la sección real
+// y borraría esta vista apilada).
+async function renderClasses() {
+  const s = $("section");
+  s.innerHTML = `
+  <div class="card"><h2>Mis clases</h2>
+    <p class="hint">Tu semana y tu Classroom en un solo lugar: horarios y enlaces de Meet, tareas, entregas, notas y grabaciones.</p>
+    <div class="row"><button class="small gold" type="button" data-scrollto="classes-cal">Ver calendario</button><button class="small" type="button" data-scrollto="classes-cr">Ver Classroom</button></div>
+  </div><div id="classes-cal"></div><div id="classes-cr"></div>`;
+  s.querySelectorAll("[data-scrollto]").forEach(b => b.addEventListener("click", () => { const el = $(b.getAttribute("data-scrollto")); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }));
+  if (!classroomToken) { try { await refreshClassroomToken(); } catch (e) {} }
+  const real = s;
+  const calBox = $("classes-cal");
+  const crBox = $("classes-cr");
+  real.id = "section-real";
+  try {
+    calBox.id = "section";
+    await renderCalendar();
+  } finally { calBox.id = "classes-cal"; }
+  try {
+    crBox.id = "section";
+    await renderClassroom();
+  } finally { crBox.id = "classes-cr"; }
+  real.id = "section";
+}
+
+// ---------- Avisos: publicar + historial (por curso) · v10 ----------
+let avCourse = "";
+let avTeacher = "";
+async function renderAvisos() {
+  const s = $("section");
+  const myCourseIds = (isAdmin || isManager) ? Object.keys(courses) : (me.courses || []);
+  if (!avCourse || !myCourseIds.includes(avCourse)) avCourse = myCourseIds[0] || "";
+  let teachers = [];
+  if (isAdmin || isManager) {
+    teachers = (await listTeachers()).filter(t => (t.courses || []).includes(avCourse));
+    if (!avTeacher || !teachers.some(t => t.uid === avTeacher)) avTeacher = teachers[0] ? teachers[0].uid : "";
+  } else {
+    avTeacher = me.uid;
+  }
+  const teacherObj = (isAdmin || isManager) ? teachers.find(t => t.uid === avTeacher) : me;
+  const announcements = avCourse ? await fetchAnnouncements(avCourse) : [];
+  const courseOptions = myCourseIds.map(id => `<option value="${id}"${id === avCourse ? " selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
+  const teacherOptions = (isAdmin || isManager) ? teachers.map(t => `<option value="${t.uid}"${t.uid === avTeacher ? " selected" : ""}>${esc(t.name)}</option>`).join("") : "";
+  s.innerHTML = `
+  <div class="card"><h2>Avisos</h2>
+    <p class="hint">Publica avisos para un curso: los alumnos de ese curso los ven en su portal. Abajo queda el historial.</p>
+    <div class="row">
+      <div><label>Curso</label><select id="av-course">${courseOptions}</select></div>
+      ${(isAdmin || isManager) ? `<div><label>Maestro/a</label><select id="av-teacher">${teacherOptions}</select></div>` : ""}
+    </div>
+    ${announcements.map(a => `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span><br>${esc(a.text || "")}</div>${(isAdmin || isManager || a.teacherId === me.uid) ? `<button class="small ghost" data-del-av="${a.id}" style="color:var(--err)">Eliminar</button>` : ""}</div>`).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
+    <div class="row" style="margin-top:12px">
+      <div><label>Título</label><input id="av-title" placeholder="Ej. Cambio de horario"></div>
+    </div>
+    <div class="row">
+      <div><label>Mensaje</label><textarea id="av-text" rows="3" placeholder="Escribe el aviso para tus alumnos…"></textarea></div>
+    </div>
+    <div style="margin-top:10px"><button id="btn-publish-av" class="gold">Publicar aviso</button></div>
+    <div id="av-msg" class="okmsg"></div><div id="av-err" class="err"></div>
+  </div>`;
+  const avCourseSel = $("av-course");
+  if (avCourseSel) avCourseSel.addEventListener("change", (e) => { avCourse = e.target.value; avTeacher = ""; renderAvisos(); });
+  const avTeacherSel = $("av-teacher");
+  if (avTeacherSel) avTeacherSel.addEventListener("change", (e) => { avTeacher = e.target.value; renderAvisos(); });
+  const btnPublishAv = $("btn-publish-av");
+  if (btnPublishAv) btnPublishAv.addEventListener("click", async () => {
+    const title = $("av-title").value.trim();
+    const text = $("av-text").value.trim();
+    showErr($("av-err"), ""); showOk($("av-msg"), "");
+    if (!title || !text) { showErr($("av-err"), "Escribe el título y el mensaje del aviso."); return; }
+    if (!teacherObj) { showErr($("av-err"), "Elige un maestro primero."); return; }
+    btnPublishAv.disabled = true;
+    try {
+      await db.collection("announcements").add({ courseId: avCourse, teacherId: teacherObj.uid, teacherName: teacherObj.name, title, text, createdAt: firebase.firestore.FieldValue.serverTimestamp(), active: true });
+      await renderAvisos();
+      showOk($("av-msg"), "Aviso publicado.");
+    } catch (e) { showErr($("av-err"), "No se pudo publicar: " + (e.message || e)); }
+    finally { btnPublishAv.disabled = false; }
+  });
+  s.querySelectorAll("[data-del-av]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("¿Eliminar este aviso? Los alumnos dejarán de verlo.")) return;
+    try {
+      await db.collection("announcements").doc(b.getAttribute("data-del-av")).delete();
+      renderAvisos();
+    } catch (e) { showErr($("av-err"), "No se pudo eliminar: " + (e.message || e)); }
+  }));
 }
 
 // ---------- Google Classroom (API oficial: lectura y escritura) ----------
@@ -600,7 +913,7 @@ async function connectClassroom() {
               classroomToken = d.accessToken;
               classroomTokenExpiresAt = Date.now() + (d.expiresIn || 3600) * 1000;
               classroomCourses = [];
-              renderClassroom();
+              renderSection();
             } catch (e) {
               if (errEl) showErr(errEl, "No se pudo conectar con Google Classroom: " + (e.message || e));
             }
@@ -628,7 +941,7 @@ async function disconnectClassroom() {
   classroomTokenExpiresAt = 0;
   classroomCourses = [];
   classroomOpenCourse = "";
-  renderClassroom();
+  renderSection();
 }
 
 // ---------- Respaldo en Google Drive ----------
@@ -1486,7 +1799,7 @@ async function renderClassroom() {
     } catch (e) {
       s.innerHTML = `<div class="card"><h2>Classroom</h2><p class="err">${esc(e.message || "No se pudieron cargar tus clases.")}</p>
         <button class="ghost" id="btn-cr-retry">Intentar de nuevo</button> <button class="ghost" id="btn-cr-disconnect">Desconectar</button></div>`;
-      $("btn-cr-retry").addEventListener("click", () => { classroomCourses = []; renderClassroom(); });
+      $("btn-cr-retry").addEventListener("click", () => { classroomCourses = []; renderSection(); });
       $("btn-cr-disconnect").addEventListener("click", disconnectClassroom);
       return;
     }
@@ -1511,7 +1824,7 @@ async function renderClassroom() {
   s.querySelectorAll("[data-cr-course]").forEach(b => b.addEventListener("click", () => {
     const id = b.getAttribute("data-cr-course");
     classroomOpenCourse = (classroomOpenCourse === id) ? "" : id;
-    renderClassroom();
+    renderSection();
   }));
   if (classroomOpenCourse) showCourseWork(classroomOpenCourse);
 }
@@ -1785,7 +2098,7 @@ async function renderCourses() {
     <td><label style="font-weight:normal"><input type="checkbox" data-course="${id}" data-field="showDiplomas" ${c.showDiplomas ? "checked" : ""} style="width:auto"> Mostrar a los alumnos</label></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
-  <div class="card"><h2>Cursos</h2>
+  <div class="card"><h2>Cursos y Diplomados</h2>
     <p class="hint">La generación de cada alumno la elige el maestro al darlo de alta: la fecha de inicio y la duración del curso ya no la determinan. Cambia los datos y toca Guardar.</p>
     ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div><div id="seed-err" class="err"></div>` : `
     <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Temario</th><th>Diplomados visibles</th><th></th></tr>${rows}</table>
@@ -2878,7 +3191,6 @@ async function renderStudents() {
   const classOptions = courseClasses.map(c => `<option value="${c.id}"${c.id === selClass ? " selected" : ""}>${esc(classScheduleText(c.days, c.startTime, c.endTime))}</option>`).join("");
   const selClassDoc = selClass ? courseClasses.find(c => c.id === selClass) : null;
   const selClassShort = selClassDoc ? classScheduleText(selClassDoc.days, selClassDoc.startTime, selClassDoc.endTime) : "";
-  const progColSpan = (calendar.length ? 11 : 10) + (isAdmin ? 1 : 0);
   // Al editar: la semana actual del alumno; al dar de alta: la semana
   // actual de la clase del alumno (la de la clase por defecto, que hereda
   // la del curso si la clase aún no tiene semana propia).
@@ -2917,23 +3229,40 @@ async function renderStudents() {
     <div class="row" style="margin-top:12px">
       <button id="btn-export" class="gold">Exportar lista en Excel</button>
       <button id="btn-blank" class="ghost">Descargar plantilla en blanco</button>
-      <button id="btn-toggle-cols" class="ghost">${showAllCols ? "Ver tabla compacta" : "Ver tabla completa"}</button>
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
     <div id="st-pass-msg" class="okmsg"></div><div id="st-pass-err" class="err"></div>
-    <div class="table-scroll"><table class="students${showAllCols ? " show-all" : ""}"><tr><th>Apellido y Nombre</th><th>CURP</th><th>Teléfono</th><th>Inicio</th><th>Generación</th><th>Clase</th><th>ID</th>${calendar.length ? "<th>Progreso</th>" : ""}<th>Docs</th><th>Acceso</th>${isAdmin ? "<th>Contraseña</th>" : ""}<th></th></tr>
-    ${shownStudents.map(st => `<tr>
-      <td>${esc(st.name)}</td><td>${esc(st.curp || "")}</td><td>${esc(st.phone || "")}</td>
-      <td>${esc(st.startDate || "—")}</td><td>${st.generation ? esc(st.generation) : "—"}</td><td>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</td>
-      <td>${esc(st.studentId || "—")}</td>
-      ${calendar.length ? `<td>${studentProgressCell(st, calendar)}</td>` : ""}
-      <td>${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}</td>
-      <td>${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</td>
-      ${isAdmin ? `<td>${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</td>` : ""}
-      <td><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""}</td></tr>
-      <tr id="docs-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div id="docs-box-${st.id}"></div></td></tr>
-      <tr id="acct-row-${st.id}" class="hidden"><td colspan="${progColSpan}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></td></tr>`).join("") || `<tr><td colspan="${progColSpan}" class="muted">Aún no hay alumnos en este curso con este maestro.</td></tr>`}
-    </table></div>
+    <div class="students-grid">
+    ${shownStudents.map(st => {
+      // Color de la tarjeta: el curso propio del alumno (no el del filtro).
+      const stCourseName = (courses[st.courseId] && courses[st.courseId].name) || course.name || "";
+      const stColor = courseColorByName(stCourseName);
+      return `<article class="student-card" id="student-card-${st.id}">
+      <div class="st-head"><span class="st-ini" style="background:${stColor}">${esc(initialsOf(st.name))}</span><div class="st-title"><strong class="st-name">${esc(st.name)}</strong><br><span class="st-course" style="color:${stColor}">${esc(stCourseName)}</span></div></div>
+      <dl class="st-meta">
+        <div><dt>Clase</dt><dd>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</dd></div>
+        <div><dt>CURP</dt><dd>${esc(st.curp || "—")}</dd></div>
+        <div><dt>Teléfono</dt><dd>${esc(st.phone || "—")}</dd></div>
+        <div><dt>Inicio</dt><dd>${esc(st.startDate || "—")}</dd></div>
+        <div><dt>Generación</dt><dd>${st.generation ? esc(st.generation) : "—"}</dd></div>
+        <div><dt>ID</dt><dd>${esc(st.studentId || "—")}</dd></div>
+      </dl>
+      <div class="st-account">${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</div>
+      <div class="st-actions"><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""} <button class="small ghost" data-ficha="${st.id}">Ver ficha</button></div>
+      <div id="ficha-${st.id}" class="st-ficha hidden">
+        ${calendar.length ? `<div class="st-ficha-sec"><h4>Avance</h4>${studentProgressCell(st, calendar)}</div>` : ""}
+        <div class="st-ficha-sec"><h4>Documentos</h4>
+          ${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}
+          <div id="docs-row-${st.id}" class="hidden"><div id="docs-box-${st.id}"></div></div>
+        </div>
+        <div class="st-ficha-sec"><h4>Cuenta de acceso</h4>
+          ${isAdmin ? `<p class="muted">Contraseña: ${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</p>` : ""}
+          <div id="acct-row-${st.id}" class="${st.authUid ? "hidden" : ""}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></div>
+        </div>
+        <div><button class="small ghost" data-ficha="${st.id}">Cerrar ficha</button></div>
+      </div>
+    </article>`; }).join("") || `<p class="muted">Aún no hay alumnos en este curso con este maestro.</p>`}
+    </div>
   </div>
   ${(isAdmin || isManager) ? `<div class="card"><h2>Constancias</h2>
     <p class="hint">Busca un alumno por su ID y se jalan sus datos para la constancia. La matrícula la escribes a mano aquí mismo; no se guarda en el portal.</p>
@@ -3012,8 +3341,6 @@ async function renderStudents() {
   if (btnDriveConnect) btnDriveConnect.addEventListener("click", connectDrive);
   const btnDriveDisconnect = $("btn-drive-disconnect");
   if (btnDriveDisconnect) btnDriveDisconnect.addEventListener("click", disconnectDrive);
-  const btnToggleCols = $("btn-toggle-cols");
-  if (btnToggleCols) btnToggleCols.addEventListener("click", () => { showAllCols = !showAllCols; renderStudents(); });
   $("btn-export").addEventListener("click", async () => {
     try {
       showErr($("exp-err"), "");
@@ -3103,8 +3430,23 @@ async function renderStudents() {
     } else row.classList.add("hidden");
   }));
   s.querySelectorAll("[data-account]").forEach(b => b.addEventListener("click", () => {
-    const row = $("acct-row-" + b.getAttribute("data-account"));
-    if (row) row.classList.toggle("hidden");
+    // "Crear cuenta" abre la ficha del alumno y muestra el formulario
+    // de crear/vincular cuenta que vive dentro de ella.
+    const id = b.getAttribute("data-account");
+    const ficha = $("ficha-" + id);
+    if (ficha) ficha.classList.remove("hidden");
+    const row = $("acct-row-" + id);
+    if (row) row.classList.remove("hidden");
+    s.querySelectorAll(`[data-ficha="${id}"]`).forEach(x => { x.textContent = "Cerrar ficha"; });
+  }));
+  // Ficha del alumno: "Ver ficha" la abre y "Cerrar ficha" la cierra.
+  // Los botones de la tarjeta y de dentro de la ficha quedan sincronizados.
+  s.querySelectorAll("[data-ficha]").forEach(b => b.addEventListener("click", () => {
+    const id = b.getAttribute("data-ficha");
+    const ficha = $("ficha-" + id);
+    if (!ficha) return;
+    const hidden = ficha.classList.toggle("hidden");
+    s.querySelectorAll(`[data-ficha="${id}"]`).forEach(x => { x.textContent = hidden ? "Ver ficha" : "Cerrar ficha"; });
   }));
   s.querySelectorAll("[data-create-account]").forEach(b => b.addEventListener("click", async () => {
     const id = b.getAttribute("data-create-account");
