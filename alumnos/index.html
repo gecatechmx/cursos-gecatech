@@ -55,6 +55,12 @@
   .hidden { display:none !important; }
   .ic { width:20px; height:20px; flex:none; vertical-align:-4px; margin-right:7px; color:var(--navy2); }
   /* ---------- Mi próxima clase ---------- */
+  /* ---------- Guía "Primeros pasos" y novedades ---------- */
+  .guide-steps { margin:10px 0 0; padding-left:22px; display:flex; flex-direction:column; gap:12px; }
+  .guide-steps li::marker { font-weight:800; color:var(--navy); }
+  .guide-steps li p { margin:2px 0 6px; }
+  .guide-overlay { position:fixed; inset:0; background:rgba(2,39,65,.72); z-index:2000; display:flex; align-items:flex-start; justify-content:center; padding:24px 14px; overflow:auto; }
+  .guide-overlay .card { max-width:640px; width:100%; margin:0; }
   .hero-class { background:linear-gradient(130deg,#022741 0%,var(--navy) 50%,var(--navy2) 100%); color:#fff; border-radius:20px; padding:26px 28px; margin:16px 0; box-shadow:var(--shadow); border-bottom:4px solid var(--gold); }
   .hero-class h2 { color:#fff; font-size:24px; margin:0 0 2px; font-weight:900; }
   .hero-class h2 .ic { color:var(--gold); }
@@ -72,6 +78,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 </head>
 <body>
 <div class="watermark" aria-hidden="true"><img id="watermark-logo" alt="" onerror="this.style.display='none'"></div>
@@ -102,6 +109,7 @@
     <div class="spacer"></div>
     <div class="user" id="user-chip"></div>
     <button class="ghost small" id="btn-account">Mi cuenta</button>
+    <button class="ghost small" id="btn-guide">Guía</button>
     <button class="ghost small" id="btn-logout">Salir</button>
   </header>
   <div class="wrap">
@@ -194,6 +202,7 @@ $("link-reset").addEventListener("click", async (e) => {
 });
 $("btn-logout").addEventListener("click", async () => { await auth.signOut(); location.reload(); });
 $("btn-account").addEventListener("click", () => renderAccount());
+$("btn-guide").addEventListener("click", () => showGuideOverlay());
 
 // Restaurar la sesión guardada al cargar la página: si el navegador
 // guardó el inicio de sesión, se entra directo sin pedir correo y
@@ -274,6 +283,112 @@ function isClassToday(schedule) {
   return found.includes(days[new Date().getDay()]);
 }
 
+// ---------- Novedades del portal ----------
+// Las novedades viven EN EL CÓDIGO, no en Firestore: cada vez que se
+// publica una versión nueva con funciones, se agregan las entradas aquí
+// y el tablero las muestra solo, sin que nadie tenga que escribir nada
+// en el portal. La más reciente va primero; si dos tienen la misma
+// fecha, manda el orden del arreglo. audiencia: "maestros", "alumnos"
+// o "ambos".
+const PORTAL_NEWS = [
+  { date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
+  { date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
+  { date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
+  { date: "2026-11-26", audience: "ambos", title: "Pregunta a tu maestro desde el portal", text: "Puedes escribirle una pregunta a tu maestro desde tu curso y ver su respuesta ahí mismo; tu maestro las responde desde Mis alumnos." },
+  { date: "2026-11-26", audience: "ambos", title: "Paga por transferencia y sube tu comprobante", text: "Elige las semanas que pagas, el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027) y sube la foto de tu comprobante; tu maestro lo confirma." },
+  { date: "2026-11-26", audience: "ambos", title: "Tus tareas y calificaciones en el portal", text: "En Mis tareas ves tus tareas de Classroom, si ya las entregaste y tu calificación, aunque tu nombre en Classroom sea distinto: se vinculan por tu correo." },
+  { date: "2026-11-26", audience: "maestros", title: "Confirmar antes de vincular una cuenta", text: "Al vincular la cuenta de un alumno, el portal te pide confirmar el correo y el curso antes de hacerlo." },
+  { date: "2026-11-26", audience: "maestros", title: "Desvincular la cuenta de un alumno", text: "Si un alumno ya no debe ver un curso, puedes desvincular su cuenta desde su ficha; su cuenta sigue existiendo para sus otros cursos." },
+  { date: "2026-11-26", audience: "maestros", title: "Eliminar el evento de Meet de una clase", text: "En Mis clases puedes eliminar el evento de Meet: se borra de tu calendario de Google y los alumnos dejan de ver el enlace." },
+  { date: "2026-11-26", audience: "ambos", title: "Los botones ya se ven como botones", text: "Entrar a Meet, Entrar a la clase y Ver comprobante ahora se ven como botones dorados, no como enlaces de texto." },
+  { date: "2026-11-26", audience: "ambos", title: "Si te rechazan un comprobante, puedes reenviarlo", text: "Un comprobante rechazado se puede volver a enviar; si se envía 3 veces en el mismo día, queda bloqueado hasta el día siguiente. Uno pagado o en revisión no se puede volver a usar." },
+  { date: "2026-11-26", audience: "ambos", title: "Tus tareas se vinculan por tu correo", text: "Aunque tu nombre en Classroom sea distinto al del portal, tus tareas y calificaciones se encuentran por tu correo electrónico (Classroom) de tu ficha." }
+];
+// Fecha "YYYY-MM-DD" a ms (inicio del día local). 0 si no se puede leer.
+function newsDateMs(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ""));
+  if (!m) return 0;
+  return new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0).getTime();
+}
+// ¿La novedad es de los últimos 14 días? (hoy sí; una fecha futura, no).
+function isNewsNew(dateStr, nowMs) {
+  const ms = newsDateMs(dateStr);
+  if (!ms) return false;
+  const now = typeof nowMs === "number" ? nowMs : Date.now();
+  return ms <= now && (now - ms) < 14 * 24 * 60 * 60 * 1000;
+}
+// Novedades para una audiencia ("maestros" o "alumnos"), de la más
+// reciente a la más antigua. No muta el arreglo original.
+function newsForAudience(list, audience) {
+  return (list || []).filter(n => n && (n.audience === audience || n.audience === "ambos"))
+    .map((n, i) => ({ n, i }))
+    .sort((a, b) => (newsDateMs(b.n.date) - newsDateMs(a.n.date)) || (a.i - b.i))
+    .map(x => x.n);
+}
+function newsItemHtml(n, nowMs) {
+  return `<p><strong>${esc(n.title || "Novedad")}</strong>${isNewsNew(n.date, nowMs) ? ` <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">Nuevo</span>` : ""} <span class="muted">${fmtAvDate(newsDateMs(n.date))}</span><br>${esc(n.text || "")}</p>`;
+}
+// ---------- Guía "Primeros pasos" ----------
+// Contenido en el código (no editable desde el portal): cada vez que se
+// agrega una función, se agrega su paso aquí. Se muestra sola la primera
+// vez que se entra (marca en localStorage) y queda siempre en el
+// encabezado (botón "Guía") y en Inicio.
+const GUIDE_KEY_ALUMNOS = "gecatechGuideSeenAlumnos";
+const GUIDE_STEPS_ALUMNOS = [
+  { title: "Ve tu próxima clase y entra", text: "Arriba ves tu próxima clase con su cuenta regresiva: pulsa Entrar a mi clase para unirte por Meet.", scroll: "Mi próxima clase" },
+  { title: "Ve el material por semana", text: "En tu curso pulsa Ver material de clase: ahí está el material desde la materia en la que entraste al curso, hacia adelante.", scroll: "Material de clase" },
+  { title: "Ve tus tareas y calificaciones", text: "En tu curso pulsa Ver mis tareas: ves tus tareas, si ya las entregaste y tu calificación. Si tu nombre en Classroom es distinto, se vinculan por tu correo.", scroll: "Mis tareas" },
+  { title: "Sube tu comprobante de pago", text: "En Mis pagos elige las semanas que pagas, escribe el monto y la fecha de la transferencia, y sube la foto de tu comprobante. Si te lo rechazan, puedes volver a enviarlo; si lo envías 3 veces en el mismo día, espera al día siguiente.", scroll: "Mis pagos" },
+  { title: "Pregunta a tu maestro", text: "En Preguntar a mi maestro escribe tu duda: tu maestro te responde ahí mismo.", scroll: "Preguntar a mi maestro" },
+  { title: "Cambia tu contraseña", text: "En Mi cuenta, arriba a la derecha, cambias tu contraseña cuando quieras.", action: "account" }
+];
+function guideStepsHtmlAlumnos() {
+  return `<ol class="guide-steps">` + GUIDE_STEPS_ALUMNOS.map(st => `<li><strong>${esc(st.title)}</strong><p>${esc(st.text)}</p>${st.scroll ? `<button class="small" type="button" data-guide-scroll="${esc(st.scroll)}">Ir a ${esc(st.scroll)}</button>` : st.action === "account" ? `<button class="small" type="button" data-guide-account="1">Ir a Mi cuenta</button>` : ""}</li>`).join("") + `</ol>`;
+}
+// Baja hasta el primer encabezado (h2 o h3) que contenga el texto.
+function scrollToHeading(text) {
+  const heads = Array.from(document.querySelectorAll("h2, h3"));
+  const el = heads.find(h => (h.textContent || "").includes(text));
+  if (el) el.scrollIntoView({ behavior: "auto", block: "start" });
+}
+function wireGuideButtonsAlumnos(root) {
+  (root || document).querySelectorAll("[data-guide-scroll]").forEach(b => b.addEventListener("click", () => {
+    markGuideSeenAlumnos();
+    closeGuideOverlay();
+    scrollToHeading(b.getAttribute("data-guide-scroll"));
+  }));
+  (root || document).querySelectorAll("[data-guide-account]").forEach(b => b.addEventListener("click", () => {
+    markGuideSeenAlumnos();
+    closeGuideOverlay();
+    renderAccount();
+  }));
+}
+// Primera visita: la guía se abre sola encima de la página, con un botón
+// para cerrarla. La marca vive en localStorage de este navegador.
+function guideSeenAlumnos() {
+  try { return localStorage.getItem(GUIDE_KEY_ALUMNOS) === "1"; } catch (e) { return true; }
+}
+function markGuideSeenAlumnos() {
+  try { localStorage.setItem(GUIDE_KEY_ALUMNOS, "1"); } catch (e) {}
+}
+function showGuideOverlay() {
+  if ($("guide-overlay")) return;
+  const ov = document.createElement("div");
+  ov.className = "guide-overlay";
+  ov.id = "guide-overlay";
+  ov.innerHTML = `<div class="card"><h2>Guía: primeros pasos</h2>
+    <p class="hint">Bienvenido/a al portal de alumnos. Esto es lo primero que debes hacer, en orden:</p>
+    ${guideStepsHtmlAlumnos()}
+    <div style="margin-top:16px"><button class="gold" type="button" id="btn-guide-ok">Entendido, empezar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  wireGuideButtonsAlumnos(ov);
+  $("btn-guide-ok").addEventListener("click", () => { markGuideSeenAlumnos(); closeGuideOverlay(); });
+}
+function closeGuideOverlay() {
+  const ov = $("guide-overlay");
+  if (ov) ov.remove();
+}
 // ---------- Mi próxima clase ----------
 // Saca los días y la hora de inicio del horario del alumno
 // ("Martes 8-10 p. m.", "Lunes 9:30-11:30 p. m.", "Martes 20:00–22:00").
@@ -430,8 +545,19 @@ async function enterApp() {
   // de sus cursos, con cuenta regresiva en vivo y su enlace de Meet.
   // Solo aparece si al menos un curso tiene un horario con día y hora.
   nextClassInfo = buildNextClass(list, courses);
+  const newsAlumnos = newsForAudience(PORTAL_NEWS, "alumnos");
   const heroSlot = nextClassInfo ? `<div id="next-class"></div>` : "";
-  s.innerHTML = heroSlot + list.map(st => {
+  const newsSlot = `<div class="card" id="news-card"><h2>Novedades del portal</h2>
+    <p class="hint">Lo nuevo del portal, sin que tengas que buscarlo.</p>
+    <div id="news-list">${newsAlumnos.slice(0, 3).map(n => newsItemHtml(n)).join("") || `<p class="muted">Aún no hay novedades.</p>`}</div>
+    <div id="news-rest" class="hidden">${newsAlumnos.slice(3).map(n => newsItemHtml(n)).join("")}</div>
+    ${newsAlumnos.length > 3 ? `<p><button class="small" type="button" id="btn-news-all">Ver todas las novedades</button></p>` : ""}
+  </div>`;
+  const guideSlot = `<div class="card" id="guide-card"><h2>Guía: primeros pasos</h2>
+    <p class="hint">Qué hacer primero al entrar y cómo usar cada función del portal.</p>
+    ${guideStepsHtmlAlumnos()}
+  </div>`;
+  s.innerHTML = heroSlot + newsSlot + guideSlot + list.map(st => {
     const course = courses[st.courseId] || {};
     const contact = teacherContact(course, st);
     const teacherLabel = contact ? contact.label : "Tu maestro/a";
@@ -481,13 +607,287 @@ async function enterApp() {
       ${meetUrl ? `<p><a class="btn gold" target="_blank" rel="noopener" href="${esc(meetUrl)}">Entrar a mi clase</a></p>` : ""}
       ${recs.length ? `<div style="margin-top:10px"><h3>Grabaciones</h3>${recs.map(r => `<p><a target="_blank" rel="noopener" href="${esc(r.url || "")}">${esc(r.title || "Grabación")}</a>${r.date ? ` <span class="muted">${fmtRecDate(r.date)}</span>` : ""}</p>`).join("")}</div>` : ""}
       ${avHtml}
+      <div style="margin-top:10px"><h3>Material de clase</h3><p><button class="small gold" id="btn-mat-${st.id}">Ver material de clase</button></p><div id="mat-box-${st.id}"></div></div>
+      <div style="margin-top:10px"><h3>Mis tareas</h3><p><button class="small gold" id="btn-work-${st.id}">Ver mis tareas</button></p><div id="work-box-${st.id}"></div></div>
+      <div style="margin-top:10px"><h3>Preguntar a mi maestro</h3>
+        <textarea id="q-text-${st.id}" rows="3" maxlength="1000" placeholder="Escribe tu pregunta para tu maestro…"></textarea>
+        <p class="muted"><span id="q-count-${st.id}">0</span>/1000 caracteres</p>
+        <p><button class="small gold" id="btn-q-${st.id}">Enviar pregunta</button></p>
+        <div id="q-msg-${st.id}" class="okmsg"></div><div id="q-err-${st.id}" class="err"></div>
+        <div id="q-list-${st.id}"><p class="muted">Cargando tus preguntas…</p></div>
+      </div>
       ${dipHtml}
       <p><strong>Fecha de inicio:</strong> ${esc(st.startDate || "—")} &nbsp; <strong>Generación:</strong> ${st.generation ? esc(st.generation) : "—"}</p>
       <div id="docs-${st.id}"><p class="muted">Cargando documentos…</p></div>
+      <div style="margin-top:10px"><h3>Mis pagos</h3>
+        <p class="muted">Pagas por transferencia bancaria y subes aquí la foto de tu comprobante. Elige las semanas que estás pagando: el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027, según la fecha de cada clase).</p>
+        <div id="pay-list-${st.id}"><p class="muted">Cargando tus pagos…</p></div>
+        <div id="pay-form-${st.id}">
+          <div id="pay-weeks-${st.id}"><p class="muted">Cargando semanas por pagar…</p></div>
+          <p><strong id="pay-total-${st.id}">Elige las semanas que vas a pagar.</strong></p>
+          <div class="row">
+            <div><label>Monto pagado ($)</label><input id="pay-amount-${st.id}" type="number" min="0" step="1" placeholder="Ej. 180"></div>
+            <div><label>Fecha de la transferencia</label><input id="pay-date-${st.id}" type="date"></div>
+          </div>
+          <div><label>Comprobante (imagen o PDF, máx. 5 MB)</label><input id="pay-file-${st.id}" type="file" accept="image/*,application/pdf"></div>
+          <p class="muted">El comprobante por sí solo no confirma que el dinero llegó a la cuenta; tu maestro lo confirma con su estado de cuenta.</p>
+          <div style="margin-top:10px"><button class="small gold" id="btn-pay-${st.id}">Enviar comprobante</button></div>
+          <div id="pay-warn-${st.id}" class="err" style="color:#7a5c00"></div><div id="pay-msg-${st.id}" class="okmsg"></div><div id="pay-err-${st.id}" class="err"></div>
+        </div>
+      </div>
     </div>`;
   }).join("");
   if (nextClassInfo) { renderNextClassHero(); tickCountdown(); cdTimer = setInterval(tickCountdown, 1000); }
-  for (const st of list) renderDocs($("docs-" + st.id), st);
+  for (const st of list) { renderDocs($("docs-" + st.id), st); setupMaterialBlock(st); setupWorkBlock(st); setupQuestionsBlock(st); setupPaymentsBlock(st, courses[st.courseId] || {}); }
+  // Botón "Ver todas las novedades" de la tarjeta de novedades.
+  const btnNewsAll = $("btn-news-all");
+  if (btnNewsAll) btnNewsAll.addEventListener("click", () => {
+    const rest = $("news-rest");
+    if (!rest) return;
+    const hidden = rest.classList.toggle("hidden");
+    btnNewsAll.textContent = hidden ? "Ver todas las novedades" : "Ver menos";
+  });
+  // Los botones de la guía de Inicio (ir a cada sección).
+  wireGuideButtonsAlumnos(s);
+  // Primera visita: se muestra la guía sola.
+  if (!guideSeenAlumnos()) showGuideOverlay();
+}
+
+// ---------- Material de clase (Classroom) ----------
+// El material se pide al servidor con la función getStudentCourseMaterials:
+// el navegador nunca habla directo con classroom.googleapis.com y nunca
+// recibe calificaciones ni entregas, solo temas y materiales. El material
+// se filtra por materia de entrada (ver materialFilterFor): cada alumno ve
+// solo desde la materia en la que entró, hacia adelante; lo anterior queda
+// oculto y lo nuevo aparece conforme se publica. Las presentaciones que el
+// maestro publica en Classroom como material (Drive, enlace o video) llegan
+// aquí igual que cualquier material: no hay que subirlas en el portal.
+// El botón queda siempre visible para reintentar tras un error.
+function materialLinksOf(m) {
+  const out = [];
+  (Array.isArray(m.materials) ? m.materials : []).forEach(att => {
+    if (att.driveFile && att.driveFile.driveFile) {
+      const f = att.driveFile.driveFile;
+      out.push({ url: f.alternateLink || "", label: f.title || "Archivo de Drive" });
+    } else if (att.link) {
+      out.push({ url: att.link.url || "", label: att.link.title || att.link.url || "Enlace" });
+    } else if (att.youtubeVideo) {
+      out.push({ url: att.youtubeVideo.alternateLink || "", label: att.youtubeVideo.title || "Video de YouTube" });
+    } else if (att.form) {
+      out.push({ url: att.form.formUrl || "", label: att.form.title || "Formulario" });
+    }
+  });
+  return out.filter(l => l.url);
+}
+function renderMaterialsHtml(data, filter) {
+  const topics = Array.isArray(data.topics) ? data.topics : [];
+  const materials = Array.isArray(data.materials) ? data.materials : [];
+  if (!materials.length) return `<p class="muted">Tu maestro aún no ha publicado material en Classroom.</p>`;
+  let list = materials;
+  if (filter) {
+    list = materials.filter(m => {
+      const c = classifyMaterialModule(m, topics, filter.syllabus);
+      if (c.kind === "temario") return false;
+      if (c.kind === "general") return true;
+      return c.idx >= filter.entryModuleIdx && c.idx <= filter.currentModuleIdx;
+    });
+    if (!list.length) return `<p class="muted">Todavía no hay material de tu materia en el portal. Cuando tu maestro publique material de la materia que estás tomando, aparecerá aquí.</p>`;
+  }
+  const byTopic = {};
+  const general = [];
+  list.forEach(m => {
+    const tid = m.topicId || "";
+    if (tid && topics.some(t => t.topicId === tid)) (byTopic[tid] = byTopic[tid] || []).push(m);
+    else general.push(m);
+  });
+  const matHtml = (m) => {
+    const links = materialLinksOf(m);
+    return `<p><strong>${esc(m.title || "Material")}</strong>${m.updateTime ? ` <span class="muted">${fmtAvDate(m.updateTime)}</span>` : ""}${m.description ? `<br>${esc(m.description)}` : ""}${links.length ? `<br>` + links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join(" · ") : ""}</p>`;
+  };
+  let html = "";
+  topics.forEach(t => {
+    const list = byTopic[t.topicId] || [];
+    if (!list.length) return;
+    html += `<h3 style="font-size:15px">${esc(t.name)}</h3>` + list.map(matHtml).join("");
+  });
+  if (general.length) html += `<h3 style="font-size:15px">Material general</h3>` + general.map(matHtml).join("");
+  return html;
+}
+async function loadStudentMaterials(st) {
+  const box = $("mat-box-" + st.id);
+  const btn = $("btn-mat-" + st.id);
+  if (!box || !btn) return;
+  box.innerHTML = `<p class="muted">Cargando material…</p>`;
+  btn.disabled = true;
+  try {
+    const fn = firebase.functions().httpsCallable("getStudentCourseMaterials");
+    const r = await fn({ studentId: st.id });
+    const d = r.data || {};
+    if (!d.connected) {
+      box.innerHTML = `<p class="muted">${d.reason === "no-classroom" ? "Este curso aún no tiene Classroom enlazado. Pídele a tu maestro que lo enlace." : "Tu maestro aún no conectó su Classroom."}</p>`;
+      return;
+    }
+    const filter = materialFilterFor(st.courseId, courses[st.courseId] || {}, st);
+    box.innerHTML = (filter && filter.entryModuleIdx > 0 ? `<p class="muted">Material desde la materia ${esc(filter.entryModuleTitle)} en adelante.</p>` : "") + renderMaterialsHtml(d, filter);
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudo cargar el material. Inténtalo de nuevo.</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+function setupMaterialBlock(st) {
+  const btn = $("btn-mat-" + st.id);
+  if (!btn) return;
+  btn.addEventListener("click", () => loadStudentMaterials(st));
+}
+
+// ---------- Mis tareas (Classroom) ----------
+// Las tareas se piden al servidor con getStudentClassroomWork: el
+// navegador nunca habla directo con classroom.googleapis.com y solo
+// recibe las tareas PUBLICADAS con la entrega de ESE alumno (nunca las
+// de otros alumnos). Las tareas no son avance del curso: título, fecha
+// de entrega y estado sí se muestran; la semana del curso nunca aparece
+// aquí. El botón queda siempre visible para reintentar tras un error.
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+function fmtWorkDue(w) {
+  const d = w.dueDate || null;
+  if (!d || !d.year || !d.month || !d.day) return "";
+  let s = d.day + " " + (MESES_CORTOS[d.month - 1] || "") + " " + d.year;
+  const t = w.dueTime || null;
+  if (t && t.hours != null) s += " " + String(t.hours).padStart(2, "0") + ":" + String(t.minutes || 0).padStart(2, "0");
+  return s;
+}
+function workDueMillis(w) {
+  const d = w.dueDate || null;
+  if (!d || !d.year || !d.month || !d.day) return Infinity;
+  const t = w.dueTime || {};
+  return new Date(d.year, d.month - 1, d.day, t.hours || 0, t.minutes || 0).getTime();
+}
+function sortWorksByDue(list) {
+  return (list || []).slice().sort((a, b) => workDueMillis(a) - workDueMillis(b));
+}
+function workStatusChip(w) {
+  // Calificada manda sobre el estado: una tarea devuelta con nota es
+  // calificada. Sin entrega en Classroom, la tarea está pendiente.
+  if (w.assignedGrade != null) return { label: "Calificada", bg: "#d9f2dd", fg: "#1d5c2e" };
+  const s = w.submissionState || "";
+  if (s === "TURNED_IN") return { label: "Entregada", bg: "#dcebf7", fg: "#0b2a4a" };
+  if (s === "RETURNED") return { label: "Devuelta", bg: "#f3d9d9", fg: "#7a1f1f" };
+  if (s === "RECLAIMED_BY_STUDENT") return { label: "Sin entregar", bg: "#eee", fg: "#555" };
+  return { label: "Pendiente", bg: "#fdeecb", fg: "#7a5c00" };
+}
+function renderWorksHtml(data) {
+  const works = sortWorksByDue(Array.isArray(data.works) ? data.works : []);
+  if (!works.length) return `<p class="muted">Tu maestro aún no ha publicado tareas en Classroom.</p>`;
+  return works.map(w => {
+    const chip = workStatusChip(w);
+    const due = fmtWorkDue(w);
+    const grade = (w.assignedGrade != null)
+      ? `<br><strong>Calificación:</strong> ${w.assignedGrade}${w.maxPoints != null ? "/" + w.maxPoints : ""}`
+      : "";
+    return `<p><strong>${esc(w.title || "Tarea")}</strong> <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:${chip.bg};color:${chip.fg}">${chip.label}</span><br><span class="muted">Fecha de entrega: ${due ? esc(due) : "Sin fecha de entrega"}</span>${w.description ? `<br>${esc(w.description)}` : ""}${grade}${w.alternateLink ? `<br><a target="_blank" rel="noopener" href="${esc(w.alternateLink)}">Abrir en Classroom</a>` : ""}</p>`;
+  }).join("");
+}
+async function loadStudentWork(st) {
+  const box = $("work-box-" + st.id);
+  const btn = $("btn-work-" + st.id);
+  if (!box || !btn) return;
+  box.innerHTML = `<p class="muted">Cargando tus tareas…</p>`;
+  btn.disabled = true;
+  try {
+    const fn = firebase.functions().httpsCallable("getStudentClassroomWork");
+    const r = await fn({ studentId: st.id });
+    const d = r.data || {};
+    if (!d.connected) {
+      box.innerHTML = `<p class="muted">${d.reason === "no-classroom" ? "Este curso aún no tiene Classroom enlazado." : "Tu maestro aún no conectó su Classroom."}</p>`;
+      return;
+    }
+    if (!d.matched) {
+      box.innerHTML = `<p class="muted">No se encontró tu entrega en Classroom con tu nombre; pídele a tu maestro que revise tu nombre en Classroom.</p>`;
+      return;
+    }
+    box.innerHTML = renderWorksHtml(d);
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudo cargar tus tareas. Inténtalo de nuevo.</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+function setupWorkBlock(st) {
+  const btn = $("btn-work-" + st.id);
+  if (!btn) return;
+  btn.addEventListener("click", () => loadStudentWork(st));
+}
+
+// ---------- Preguntar a mi maestro ----------
+// El alumno escribe su pregunta directo en la colección `questions` (sin
+// pasar por el servidor): el documento lleva studentAuthUid denormalizado
+// para que las reglas puedan filtrar sin get() anidados en la consulta.
+// Sin orderBy (evita necesitar un índice compuesto): se ordena en el
+// cliente por fecha descendente. La pregunta y su respuesta son lo único
+// que ve el alumno en este bloque.
+const MAX_QUESTION_LEN = 1000;
+function sortQuestionsDesc(list) {
+  return [...list].sort((a, b) => tsMillis(b.createdAt) - tsMillis(a.createdAt));
+}
+function questionStatusChip(q) {
+  return q.status === "respondida"
+    ? `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#dcebf7;color:#0b2a4a">Respondida</span>`
+    : `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">Pendiente</span>`;
+}
+function renderQuestionsHtml(list) {
+  if (!list.length) return `<p class="muted">Aún no has hecho preguntas en este curso.</p>`;
+  return list.map(q => `<p><strong>${esc(q.text || "")}</strong> ${questionStatusChip(q)} <span class="muted">${fmtAvDate(q.createdAt)}</span>${q.status === "respondida" && (q.answer || "").trim() ? `<br><strong>Respuesta de tu maestro:</strong> ${esc(q.answer)}${q.answeredAt ? ` <span class="muted">${fmtAvDate(q.answeredAt)}</span>` : ""}` : ""}</p>`).join("");
+}
+async function loadStudentQuestions(st) {
+  const box = $("q-list-" + st.id);
+  if (!box) return;
+  try {
+    const snap = await db.collection("questions").where("studentId", "==", st.id).get();
+    const arr = []; snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+    box.innerHTML = renderQuestionsHtml(sortQuestionsDesc(arr));
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudieron cargar tus preguntas. Inténtalo de nuevo.</p>`;
+  }
+}
+async function sendStudentQuestion(st) {
+  const ta = $("q-text-" + st.id);
+  const btn = $("btn-q-" + st.id);
+  if (!ta || !btn) return;
+  const text = ta.value.trim();
+  showErr($("q-err-" + st.id), ""); showOk($("q-msg-" + st.id), "");
+  if (!text) { showErr($("q-err-" + st.id), "Escribe tu pregunta antes de enviarla."); return; }
+  if (text.length > MAX_QUESTION_LEN) { showErr($("q-err-" + st.id), "Tu pregunta no puede pasar de 1000 caracteres."); return; }
+  btn.disabled = true;
+  try {
+    await db.collection("questions").add({
+      studentId: st.id,
+      studentName: myName || "",
+      studentAuthUid: myUid || "",
+      teacherId: st.teacherId || "",
+      courseId: st.courseId || "",
+      text,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: "pendiente",
+      answer: "",
+      answeredAt: null,
+      answeredBy: ""
+    });
+    ta.value = "";
+    const cnt = $("q-count-" + st.id); if (cnt) cnt.textContent = "0";
+    showOk($("q-msg-" + st.id), "Pregunta enviada. Tu maestro te responderá aquí mismo.");
+    await loadStudentQuestions(st);
+  } catch (e) {
+    showErr($("q-err-" + st.id), "No se pudo enviar tu pregunta. Inténtalo de nuevo.");
+  } finally { btn.disabled = false; }
+}
+function setupQuestionsBlock(st) {
+  const btn = $("btn-q-" + st.id);
+  const ta = $("q-text-" + st.id);
+  if (!btn || !ta) return;
+  ta.addEventListener("input", () => { const c = $("q-count-" + st.id); if (c) c.textContent = String(ta.value.length); });
+  btn.addEventListener("click", () => sendStudentQuestion(st));
+  loadStudentQuestions(st);
 }
 
 // ---------- Mi cuenta ----------
@@ -549,6 +949,480 @@ function renderAccount() {
   });
 }
 
+// ---------- Mis pagos ----------
+// El alumno paga por transferencia bancaria y sube la foto del
+// comprobante. Escribe directo en la subcolección `payments` de su ficha
+// (sin pasar por el servidor) y su maestro lo confirma o lo rechaza
+// directo desde su portal.
+//
+// REGLAS DE PRECIOS Y SEMANAS (diseño aprobado 2026-11-26):
+//  - Fecha de la semana N: startDate del CURSO (courses/{id}.startDate)
+//    + (N-1)*7 días (una clase por semana).
+//  - Precio según la FECHA DE LA CLASE, no la fecha de pago: $90 si la
+//    clase cae en 2026, $100 si cae desde el 1 de enero de 2027.
+//  - Tope de semanas: el calendario del curso derivado del temario, la
+//    misma derivación del portal de maestros (buildWeekCalendar con
+//    WEEK_PLAN: Industrial 53 semanas, Administrativo 54; otros cursos,
+//    1 tema = 1 semana). Si el curso no tiene temario, no hay tope de
+//    calendario: solo manda la fecha (hasta hoy).
+//  - Semanas pagables: las que tienen fecha de clase hasta hoy, desde la
+//    semana de ingreso del alumno (la primera cuya fecha cae en o después
+//    de su startDate), excluyendo las ya pagadas o en revisión. Se derivan
+//    solo de fechas: al alumno NUNCA se le muestra en qué semana va el
+//    curso; las semanas aparecen solo como opciones de pago con su fecha
+//    y su precio.
+//  - El comprobante por sí solo NO verifica que el dinero llegó a la
+//    cuenta: eso lo confirma el maestro con su estado de cuenta (el portal
+//    lo dice en el formulario y en la cola del maestro).
+const MAX_RECEIPT_MB = 5;
+// Calendario de semanas del curso: misma derivación que el portal de
+// maestros (ver WEEK_PLAN y buildWeekCalendar ahí).
+const WEEK_PLAN = {
+  industrial: [4, 5, 5, 4, 5, 4, 5, 4, 5, 4, 4, 4],
+  administrativo: [3, 3, 6, 6, 5, 5, 4, 5, 4, 5, 4, 4],
+};
+function flattenSyllabus(syllabus) {
+  const out = [];
+  (Array.isArray(syllabus) ? syllabus : []).forEach(m => {
+    (Array.isArray(m.topics) ? m.topics : []).forEach(t => out.push({ index: out.length, module: m.title || "", topic: t }));
+  });
+  return out;
+}
+function weeksOfModule(items, weekCount) {
+  const w = Math.max(1, weekCount | 0);
+  const base = Math.floor(items.length / w), rem = items.length % w;
+  const out = [];
+  let p = 0;
+  for (let i = 0; i < w; i++) {
+    const take = base + (i < rem ? 1 : 0);
+    out.push(items.slice(p, p + take));
+    p += take;
+  }
+  return out;
+}
+function buildWeekCalendar(courseId, syllabus) {
+  const plan = WEEK_PLAN[courseId] || null;
+  const flat = flattenSyllabus(syllabus || []);
+  const modules = [];
+  flat.forEach(it => {
+    const last = modules[modules.length - 1];
+    if (last && last.title === it.module) last.items.push(it);
+    else modules.push({ title: it.module, items: [it] });
+  });
+  const weeks = [];
+  modules.forEach((m, mi) => {
+    const w = (plan && plan[mi]) ? plan[mi] : Math.max(1, m.items.length);
+    weeksOfModule(m.items, w).forEach(items => {
+      weeks.push({ week: weeks.length + 1, module: m.title, topicIdxs: items.map(t => t.index), topics: items.map(t => t.topic) });
+    });
+  });
+  return weeks;
+}
+// Semana (índice 0-based) a la que pertenece un índice global de tema.
+function topicIndexToWeekIdx(calendar, topicIdx) {
+  if (!calendar.length || typeof topicIdx !== "number") return null;
+  for (let i = 0; i < calendar.length; i++) if (calendar[i].topicIdxs.includes(topicIdx)) return i;
+  // El tema ya no existe (temario editado): la semana del tema anterior más cercano.
+  for (let t = topicIdx - 1; t >= 0; t--) {
+    for (let i = 0; i < calendar.length; i++) if (calendar[i].topicIdxs.includes(t)) return i;
+  }
+  return 0;
+}
+// Normaliza un valor guardado de currentClass a índice 0-based de semana.
+function storedToWeekIdx(calendar, stored) {
+  if (!calendar.length) return null;
+  if (stored && typeof stored === "object" && typeof stored.week === "number") {
+    if (stored.week < 0) return 0;
+    if (stored.week >= calendar.length) return calendar.length - 1;
+    return stored.week;
+  }
+  if (typeof stored === "number") return topicIndexToWeekIdx(calendar, stored);
+  return null;
+}
+// ---------- Filtro de material por materia de entrada ----------
+// Cada alumno ve el material solo desde la materia en la que entró,
+// hacia adelante: visible = módulos con índice >= módulo de entrada
+// del alumno y <= módulo actual del curso. Lo anterior a su entrada
+// queda oculto; lo nuevo aparece conforme se publica. El módulo de
+// entrada se deriva de la semana de entrada del alumno (su fecha de
+// inicio contra el inicio del curso); el módulo actual, de la semana
+// actual del curso (courses/{id}.currentClass, que se elige a mano con
+// el selector de materia o el de semana: ambos escriben lo mismo).
+// La semana del curso NUNCA se le muestra al alumno: solo el nombre
+// de la materia. Sin temario o sin fecha de ingreso definible no se
+// filtra nada: se muestra todo como antes.
+function normTopicName(s) {
+  return String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function moduleTitlesOf(calendar) {
+  const out = [];
+  (Array.isArray(calendar) ? calendar : []).forEach(wk => { const t = (wk && wk.module) || ""; if (t && !out.includes(t)) out.push(t); });
+  return out;
+}
+function moduleIndexOfWeek(calendar, weekIdx0) {
+  if (!Array.isArray(calendar) || !calendar.length || weekIdx0 == null || weekIdx0 < 0) return null;
+  const wk = calendar[Math.min(weekIdx0, calendar.length - 1)];
+  if (!wk) return null;
+  return moduleTitlesOf(calendar).indexOf(wk.module || "");
+}
+function firstWeekIdxOfModule(calendar, moduleIdx) {
+  const titles = moduleTitlesOf(calendar);
+  const title = titles[moduleIdx];
+  if (title == null) return null;
+  for (let i = 0; i < (Array.isArray(calendar) ? calendar : []).length; i++) if (((calendar[i] || {}).module || "") === title) return i;
+  return null;
+}
+// "YYYY-MM-DD" -> ms de medianoche local, o null.
+function ymdMillis(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? "" : s).trim());
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return isNaN(d) ? null : d.getTime();
+}
+// Primera semana (1-based) cuya fecha de clase cae en o después del
+// ingreso del alumno. Sin fecha de ingreso o sin inicio del curso no se
+// puede derivar: null (entonces no se filtra). Misma cuenta que las
+// semanas pagables: inicio del curso + pasos de 7 días.
+function entryWeek1Based(courseStart, studentStart) {
+  const cs = String(courseStart || "").slice(0, 10);
+  const ss = String(studentStart || "").slice(0, 10);
+  const csMs = ymdMillis(cs);
+  if (csMs == null || !/^\d{4}-\d{2}-\d{2}$/.test(ss)) return null;
+  if (ss <= cs) return 1;
+  const ssMs = ymdMillis(ss);
+  if (ssMs == null) return null;
+  return 1 + Math.ceil((ssMs - csMs) / (7 * 24 * 60 * 60 * 1000));
+}
+// Prefijo numérico del título: "3.1 — ..." -> "3.1"; null si no lo tiene.
+function topicNumberOf(title) {
+  const m = /^\s*(\d+)\.(\d+)\b/.exec(String(title || ""));
+  return m ? (m[1] + "." + m[2]) : null;
+}
+// ¿El título es el documento del temario completo? Se oculta del alumno.
+function isTemarioTitle(title) {
+  return /^\s*temario\b/i.test(String(title || ""));
+}
+// Índice del módulo al que pertenece un nombre de tema de Classroom
+// (normalizado): exacto, uno contiene al otro, o todas sus palabras
+// están en el módulo. null si no casa con ningún módulo.
+function moduleIdxForTopicName(topicName, moduleTitles) {
+  const nt = normTopicName(topicName);
+  if (!nt) return null;
+  const norms = (moduleTitles || []).map(normTopicName);
+  let i = norms.indexOf(nt);
+  if (i >= 0) return i;
+  for (let k = 0; k < norms.length; k++) {
+    if (norms[k] && (norms[k].includes(nt) || nt.includes(norms[k]))) return k;
+  }
+  const words = nt.split(" ").filter(w => w.length > 2);
+  if (words.length) {
+    for (let k = 0; k < norms.length; k++) {
+      if (words.every(w => norms[k].includes(w))) return k;
+    }
+  }
+  return null;
+}
+// Clasifica un material de Classroom a un módulo del temario:
+// { kind: "module", idx } | { kind: "general" } | { kind: "temario" }.
+// PRIMERO por el nombre del tema de Classroom; SEGUNDO por el prefijo
+// numérico del título combinado con el tema (el número solo no basta:
+// en Administrativo el 1.1 se repite entre módulos). Sin tema que case
+// y sin número: "Material general", que sigue visible (Reglamento,
+// Introducción a plataformas.), salvo el documento "Temario", que se oculta.
+function classifyMaterialModule(m, topics, syllabus) {
+  const title = (m && m.title) || "";
+  if (isTemarioTitle(title)) return { kind: "temario" };
+  const modules = (Array.isArray(syllabus) ? syllabus : []).map(x => (x && x.title) || "");
+  const topic = (topics || []).find(t => t && t.topicId === (m && m.topicId));
+  const topicName = topic ? (topic.name || "") : "";
+  const byTopic = moduleIdxForTopicName(topicName, modules);
+  if (byTopic !== null) return { kind: "module", idx: byTopic };
+  const num = topicNumberOf(title);
+  if (num) {
+    const cands = [];
+    (Array.isArray(syllabus) ? syllabus : []).forEach((mod, mi) => {
+      (Array.isArray(mod.topics) ? mod.topics : []).forEach(t => {
+        if (topicNumberOf(t) === num) cands.push(mi);
+      });
+    });
+    const uniq = [...new Set(cands)];
+    if (uniq.length === 1) return { kind: "module", idx: uniq[0] };
+    if (uniq.length > 1) {
+      const byTopic2 = moduleIdxForTopicName(topicName, uniq.map(i => modules[i]));
+      if (byTopic2 !== null) return { kind: "module", idx: uniq[byTopic2] };
+    }
+  }
+  return { kind: "general" };
+}
+// Filtro de material para un alumno: { syllabus, entryModuleIdx,
+// currentModuleIdx, entryModuleTitle, currentModuleTitle } o null si no
+// se puede filtrar (sin temario o sin fecha de ingreso definible): en
+// ese caso se muestra todo como antes. course: {startDate, syllabus,
+// currentClass}; student: {startDate}. Sin semana actual definida el
+// tope es la última materia.
+function materialFilterFor(courseId, course, student) {
+  const syllabus = (course && Array.isArray(course.syllabus)) ? course.syllabus : [];
+  const calendar = buildWeekCalendar(courseId, syllabus);
+  if (!calendar.length) return null;
+  const entryWeek = entryWeek1Based(course && course.startDate, student && student.startDate);
+  if (entryWeek == null) return null;
+  const entryModuleIdx = moduleIndexOfWeek(calendar, entryWeek - 1);
+  if (entryModuleIdx == null) return null;
+  const titles = moduleTitlesOf(calendar);
+  const curWeekIdx = storedToWeekIdx(calendar, course && course.currentClass);
+  const currentModuleIdx = curWeekIdx == null ? titles.length - 1 : moduleIndexOfWeek(calendar, curWeekIdx);
+  if (currentModuleIdx == null) return null;
+  return { syllabus, entryModuleIdx, currentModuleIdx, entryModuleTitle: titles[entryModuleIdx] || "", currentModuleTitle: titles[currentModuleIdx] || "" };
+}
+// Opciones del selector de materia: una por módulo del curso.
+function moduleOptionsHtml(calendar, selectedModuleIdx) {
+  return moduleTitlesOf(calendar).map((t, i) => `<option value="${i}"${i === selectedModuleIdx ? " selected" : ""}>${esc(t)}</option>`).join("");
+}
+// "YYYY-MM-DD" -> Date local, o null si no se puede leer.
+function parseYMD(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? "" : s).trim());
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return isNaN(d) ? null : d;
+}
+function fmtYMD(d) {
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function addDaysYMD(ymd, days) {
+  const d = parseYMD(ymd);
+  if (!d) return "";
+  d.setDate(d.getDate() + days);
+  return fmtYMD(d);
+}
+// Fecha de la clase de la semana N (1-based) desde el inicio del curso.
+function weekDate(courseStart, n) {
+  if (!parseYMD(courseStart) || !(n >= 1)) return "";
+  return addDaysYMD(courseStart, (n - 1) * 7);
+}
+// Precio de una clase según SU fecha: $90 en 2026, $100 desde 2027-01-01.
+function priceForWeekDate(ymd) {
+  if (!ymd) return 90;
+  return ymd < "2027-01-01" ? 90 : 100;
+}
+function todayYMD() { return fmtYMD(new Date()); }
+// Semanas que el alumno puede pagar ahora: [{week, date, price}].
+// o: {courseStart, totalWeeks (0 = sin tope de calendario), studentStart,
+//     today ("YYYY-MM-DD"), blockedWeeks (números ya pagados o en revisión)}.
+function payableWeeks(o) {
+  const courseStart = String(o.courseStart || "").slice(0, 10);
+  const studentStart = String(o.studentStart || "").slice(0, 10);
+  const today = o.today || "";
+  const total = o.totalWeeks | 0;
+  const blocked = new Set(o.blockedWeeks || []);
+  const out = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(courseStart)) return out;
+  // Primera semana pagable: la primera cuya fecha cae en o después del
+  // ingreso del alumno (sin fecha de ingreso: la semana 1).
+  let n = 1;
+  if (studentStart && studentStart > courseStart) {
+    const ms = parseYMD(studentStart) - parseYMD(courseStart);
+    n = 1 + Math.ceil(ms / (7 * 24 * 60 * 60 * 1000));
+  }
+  for (; ; n++) {
+    if (total > 0 && n > total) break;
+    const d = weekDate(courseStart, n);
+    if (!d || d > today) break;
+    if (!blocked.has(n)) out.push({ week: n, date: d, price: priceForWeekDate(d) });
+  }
+  return out;
+}
+function computeTotal(weeks) {
+  return (weeks || []).reduce((s, w) => s + (w.price | 0), 0);
+}
+// Validación del pago antes de enviar: {ok, error, warning, total}.
+// El monto debe ser exactamente el total calculado; la fecha no puede ser
+// futura; con más de 30 días de antigüedad solo advierte (el maestro decide).
+function validatePayment(o) {
+  const weeks = o.selectedWeeks || [];
+  if (!weeks.length) return { ok: false, error: "Elige al menos una semana para pagar.", warning: "", total: 0 };
+  const total = computeTotal(weeks);
+  const amount = Number(o.amount);
+  if (o.amount === "" || o.amount == null || isNaN(amount) || amount <= 0) return { ok: false, error: "Escribe el monto que pagaste.", warning: "", total };
+  if (amount !== total) return { ok: false, error: "El monto no coincide: las semanas elegidas suman $" + total + ". Revisa el monto de tu transferencia.", warning: "", total };
+  if (!o.receiptDate) return { ok: false, error: "Elige la fecha de la transferencia.", warning: "", total };
+  if (o.receiptDate > o.today) return { ok: false, error: "La fecha de la transferencia no puede ser futura.", warning: "", total };
+  let warning = "";
+  const ms = parseYMD(o.today) - parseYMD(o.receiptDate);
+  if (!isNaN(ms) && ms > 30 * 24 * 60 * 60 * 1000) warning = "El comprobante tiene más de 30 días. Lo puedes enviar, pero tu maestro decidirá si lo acepta.";
+  return { ok: true, error: "", warning, total };
+}
+// Huella del comprobante para detectar si ya se usó en otro pago de esta
+// ficha. SHA-256 con crypto.subtle; si el navegador no lo tiene (contexto
+// no seguro), clave débil tamaño+nombre+fecha y se anota con el prefijo
+// "débil:" (puede dar un falso positivo si se sube otro archivo con el
+// mismo nombre y tamaño, pero nunca deja pasar un comprobante repetido
+// con el mismo hash).
+async function receiptHashHex(buf) {
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function receiptWeakKey(file) {
+  return "débil:" + file.size + ":" + file.name + ":" + (file.lastModified || "");
+}
+async function receiptHashOf(file) {
+  try {
+    if (window.crypto && window.crypto.subtle && window.crypto.subtle.digest) {
+      return await receiptHashHex(await file.arrayBuffer());
+    }
+  } catch (e) {}
+  return receiptWeakKey(file);
+}
+// Día (YYYY-MM-DD) de un instante en America/Chihuahua. Sirve para el
+// límite diario de reenvíos: el día cambia a medianoche de Chihuahua,
+// no a la del dispositivo del alumno.
+function dayYMDChihuahua(ms) {
+  if (!ms) return "";
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chihuahua", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+  } catch (e) { return ""; }
+}
+// Revisión del comprobante antes de enviar: {ok, error}.
+// - Hash igual a un pago CONFIRMADO (pagado) de esta ficha: bloqueado
+//   siempre, no se puede reusar un comprobante ya pagado.
+// - Hash igual a un pago PENDIENTE (en revisión): bloqueado mientras
+//   siga en revisión.
+// - Hash igual SOLO a pagos RECHAZADOS: se puede volver a subir.
+// - Pero si el mismo comprobante ya se envió 3 veces hoy
+//   (America/Chihuahua, de cualquier estado), el siguiente intento queda
+//   bloqueado por el resto del día; al día siguiente el conteo se
+//   reinicia (los confirmados y pendientes siguen bloqueando aunque sean
+//   de otro día). Un envío sin createdAt no se puede ubicar en un día,
+//   así que no cuenta para el límite diario.
+function checkReceiptReuse(list, hash, today) {
+  const same = (list || []).filter(p => p && p.receiptHash === hash);
+  if (same.some(p => p.status === "confirmado")) return { ok: false, error: "Este comprobante ya se usó en un pago confirmado (pagado). No se puede volver a usar." };
+  if (same.some(p => p.status === "pendiente")) return { ok: false, error: "Este comprobante ya está en revisión en otro pago. Espera a que tu maestro lo revise." };
+  const todayCount = same.filter(p => dayYMDChihuahua(tsMillis(p.createdAt)) === today).length;
+  if (todayCount >= 3) return { ok: false, error: "Este comprobante ya se envió 3 veces hoy, inténtalo mañana." };
+  return { ok: true, error: "" };
+}
+function sortPaymentsDesc(list) {
+  return [...list].sort((a, b) => tsMillis(b.createdAt) - tsMillis(a.createdAt));
+}
+function paymentStatusChip(p) {
+  if (p.status === "confirmado") return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#e3f0d3;color:#4a7003">Pagado</span>`;
+  if (p.status === "rechazado") return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#fbe3e1;color:#d41c14">Rechazado</span>`;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">En revisión</span>`;
+}
+// Resumen de pagos: semanas pagadas, en revisión y rechazadas con motivo.
+function renderPaymentsHtml(list) {
+  if (!list.length) return `<p class="muted">Aún no has enviado comprobantes en este curso.</p>`;
+  const paid = [], pending = [], rejected = [];
+  list.forEach(p => { (p.status === "confirmado" ? paid : p.status === "rechazado" ? rejected : pending).push(p); });
+  const weeksOf = arr => arr.flatMap(p => p.weeks || []).sort((a, b) => a - b);
+  const paidWeeks = weeksOf(paid);
+  const pendingWeeks = weeksOf(pending);
+  let html = `<p><strong>Semanas pagadas:</strong> ${paidWeeks.length ? esc(paidWeeks.join(", ")) : "ninguna todavía"}</p>`;
+  if (pendingWeeks.length) html += `<p><strong>En revisión:</strong> semanas ${esc(pendingWeeks.join(", "))} — tu maestro está revisando tu comprobante.</p>`;
+  html += list.map(p => {
+    const weeks = (p.weeks || []).slice().sort((a, b) => a - b);
+    return `<p>Semanas ${weeks.length ? esc(weeks.join(", ")) : "—"} · $${esc(p.amount)} · ${esc(p.receiptDate || "—")} ${paymentStatusChip(p)} <span class="muted">${fmtAvDate(p.createdAt)}</span>${p.status === "rechazado" && p.rejectReason ? `<br>Motivo del rechazo: ${esc(p.rejectReason)}` : ""}</p>`;
+  }).join("");
+  return html;
+}
+async function loadStudentPayments(st) {
+  const box = $("pay-list-" + st.id);
+  if (!box) return [];
+  try {
+    // Sin orderBy (evita necesitar un índice compuesto): se ordena en el
+    // cliente por fecha descendente, como las preguntas y los avisos.
+    const snap = await db.collection("students").doc(st.id).collection("payments").get();
+    const arr = []; snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+    const sorted = sortPaymentsDesc(arr);
+    box.innerHTML = renderPaymentsHtml(sorted);
+    return sorted;
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudieron cargar tus pagos. Inténtalo de nuevo.</p>`;
+    return [];
+  }
+}
+async function setupPaymentsBlock(st, course) {
+  const box = $("pay-list-" + st.id);
+  const form = $("pay-form-" + st.id);
+  if (!box || !form) return;
+  const calendar = buildWeekCalendar(st.courseId, (course && course.syllabus) || []);
+  const payments = await loadStudentPayments(st);
+  const blocked = new Set();
+  payments.forEach(p => { if (p.status === "confirmado" || p.status === "pendiente") (p.weeks || []).forEach(w => blocked.add(w)); });
+  const weeks = payableWeeks({ courseStart: (course && course.startDate) || st.startDate || "", totalWeeks: calendar.length, studentStart: st.startDate || "", today: todayYMD(), blockedWeeks: [...blocked] });
+  const listEl = $("pay-weeks-" + st.id);
+  const totalEl = $("pay-total-" + st.id);
+  const getSelected = () => [...form.querySelectorAll("input[data-pay-week]:checked")].map(cb => ({ week: +cb.getAttribute("data-pay-week"), date: cb.getAttribute("data-pay-date"), price: +cb.getAttribute("data-pay-price") }));
+  const updateTotal = () => {
+    const sel = getSelected();
+    totalEl.textContent = sel.length ? "Total a pagar: $" + computeTotal(sel) : "Elige las semanas que vas a pagar.";
+    return sel;
+  };
+  if (!weeks.length) {
+    listEl.innerHTML = `<p class="muted">Por ahora no hay semanas por pagar en este curso: las semanas con fecha hasta hoy ya están pagadas o en revisión, o el curso aún no tiene fecha de inicio registrada.</p>`;
+  } else {
+    listEl.innerHTML = weeks.map(w => `<label style="display:block;font-weight:400;color:var(--text);margin:6px 0"><input type="checkbox" style="width:auto" data-pay-week="${w.week}" data-pay-date="${w.date}" data-pay-price="${w.price}"> Semana ${w.week} — ${fmtRecDate(w.date)} — $${w.price}</label>`).join("");
+    listEl.querySelectorAll("input[data-pay-week]").forEach(cb => cb.addEventListener("change", updateTotal));
+  }
+  updateTotal();
+  const btn = $("btn-pay-" + st.id);
+  if (btn) btn.addEventListener("click", () => sendStudentPayment(st, { getSelected, refresh: () => setupPaymentsBlock(st, course) }));
+}
+async function sendStudentPayment(st, ctx) {
+  const errEl = $("pay-err-" + st.id), msgEl = $("pay-msg-" + st.id), warnEl = $("pay-warn-" + st.id);
+  const btn = $("btn-pay-" + st.id);
+  if (!btn) return;
+  showErr(errEl, ""); showOk(msgEl, ""); if (warnEl) warnEl.textContent = "";
+  const selected = ctx.getSelected();
+  const amount = $("pay-amount-" + st.id).value.trim();
+  const receiptDate = $("pay-date-" + st.id).value;
+  const file = $("pay-file-" + st.id).files[0];
+  const v = validatePayment({ selectedWeeks: selected, amount, receiptDate, today: todayYMD() });
+  if (!v.ok) { showErr(errEl, v.error); return; }
+  if (v.warning && warnEl) warnEl.textContent = v.warning;
+  if (!file) { showErr(errEl, "Elige la foto o PDF de tu comprobante."); return; }
+  const okType = file.type.startsWith("image/") || file.type === "application/pdf" || /\.(pdf|jpg|jpeg|png|webp|heic)$/i.test(file.name);
+  if (!okType) { showErr(errEl, "El comprobante debe ser una imagen o un PDF."); return; }
+  if (file.size > MAX_RECEIPT_MB * 1024 * 1024) { showErr(errEl, "El comprobante es muy grande (máximo " + MAX_RECEIPT_MB + " MB)."); return; }
+  if (!st.teacherId) { showErr(errEl, "Tu ficha no tiene maestro asignado. Avísale al administrador."); return; }
+  btn.disabled = true;
+  try {
+    // El comprobante no debe haberse usado en un pago confirmado o en
+    // revisión, ni haberse enviado 3 veces hoy: se compara su huella
+    // con los pagos que ya tiene esta ficha.
+    const hash = await receiptHashOf(file);
+    const existing = await loadStudentPayments(st);
+    const reuse = checkReceiptReuse(existing, hash, dayYMDChihuahua(Date.now()));
+    if (!reuse.ok) { showErr(errEl, reuse.error); return; }
+    // Ruta PLANA bajo alumnos/{teacherId}/{studentId}/ (sin subcarpeta):
+    // la regla existente `match /alumnos/{teacherId}/{studentId}/{fileName}`
+    // solo cubre un segmento de nombre, así que no hace falta cambiar
+    // storage.rules. Igual que los documentos del alumno.
+    const path = "alumnos/" + st.teacherId + "/" + st.id + "/comprobante_" + Date.now() + "_" + file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+    await storage.ref(path).put(file);
+    await db.collection("students").doc(st.id).collection("payments").add({
+      studentId: st.id,
+      studentName: myName || "",
+      studentAuthUid: myUid || "",
+      teacherId: st.teacherId || "",
+      courseId: st.courseId || "",
+      weeks: selected.map(w => w.week),
+      amount: Number(amount),
+      receiptPath: path,
+      receiptHash: hash,
+      receiptDate,
+      status: "pendiente",
+      rejectReason: "",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showOk(msgEl, "Comprobante enviado. Tu maestro lo revisará y te confirmará aquí mismo.");
+    await ctx.refresh();
+  } catch (e) {
+    showErr(errEl, "No se pudo enviar tu comprobante. Inténtalo de nuevo.");
+  } finally { btn.disabled = false; }
+}
+
 // ---------- Mis documentos ----------
 async function renderDocs(box, st) {
   if (!box) return;
@@ -559,8 +1433,8 @@ async function renderDocs(box, st) {
     box.innerHTML = `
       <h3>Mis documentos</h3>
       ${docs.map(d => `<div class="docline"><span>${esc(d.name)}</span><span class="muted">${d.uploadedAt ? new Date(d.uploadedAt).toLocaleDateString("es-MX") : ""}${d.size ? " · " + Math.round(d.size / 1024) + " KB" : ""}</span>
-        <a href="#" data-dl="${d.id}" data-path="${esc(d.path)}">Descargar</a>
-        <a href="#" data-del-doc="${d.id}" data-path="${esc(d.path)}" style="color:var(--err)">Eliminar</a></div>`).join("") || `<p class="muted">Aún no has subido documentos. Sube tu INE, CURP, acta de nacimiento y comprobantes en PDF.</p>`}
+        <button type="button" class="small ghost" data-dl="${d.id}" data-path="${esc(d.path)}">Descargar</button>
+        <button type="button" class="small ghost" data-del-doc="${d.id}" data-path="${esc(d.path)}" style="color:var(--err)">Eliminar</button></div>`).join("") || `<p class="muted">Aún no has subido documentos. Sube tu INE, CURP, acta de nacimiento y comprobantes en PDF.</p>`}
       <div class="row">
         <div><label>Nombre del documento</label><input id="doc-name-${st.id}" list="doc-types-${st.id}" placeholder="Ej. INE, CURP, acta…"></div>
         <div><label>Archivo PDF (máx. ${MAX_FILE_MB} MB)</label><input id="up-${st.id}" type="file" accept="application/pdf"></div>
