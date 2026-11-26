@@ -291,6 +291,7 @@ function isClassToday(schedule) {
 // fecha, manda el orden del arreglo. audiencia: "maestros", "alumnos"
 // o "ambos".
 const PORTAL_NEWS = [
+  { date: "2026-11-26", audience: "ambos", title: "Datos de pago de tu maestro en el portal", text: "Cada maestro registra sus datos bancarios (banco, titular, tarjeta y CLABE) en el portal; sus alumnos los copian desde su curso, en Datos para pagar, para pagar por transferencia sin salir del portal." },
   { date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
   { date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
   { date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
@@ -338,7 +339,7 @@ const GUIDE_STEPS_ALUMNOS = [
   { title: "Ve tu próxima clase y entra", text: "Arriba ves tu próxima clase con su cuenta regresiva: pulsa Entrar a mi clase para unirte por Meet.", scroll: "Mi próxima clase" },
   { title: "Ve el material por semana", text: "En tu curso pulsa Ver material de clase: ahí está el material desde la materia en la que entraste al curso, hacia adelante.", scroll: "Material de clase" },
   { title: "Ve tus tareas y calificaciones", text: "En tu curso pulsa Ver mis tareas: ves tus tareas, si ya las entregaste y tu calificación. Si tu nombre en Classroom es distinto, se vinculan por tu correo.", scroll: "Mis tareas" },
-  { title: "Sube tu comprobante de pago", text: "En Mis pagos elige las semanas que pagas, escribe el monto y la fecha de la transferencia, y sube la foto de tu comprobante. Si te lo rechazan, puedes volver a enviarlo; si lo envías 3 veces en el mismo día, espera al día siguiente.", scroll: "Mis pagos" },
+  { title: "Sube tu comprobante de pago", text: "En Mis pagos elige las semanas que pagas, escribe el monto y la fecha de la transferencia, y sube la foto de tu comprobante. Si te lo rechazan, puedes volver a enviarlo; si lo envías 3 veces en el mismo día, espera al día siguiente. Copia los datos de tu maestro en Datos para pagar, junto a Mis pagos.", scroll: "Mis pagos" },
   { title: "Pregunta a tu maestro", text: "En Preguntar a mi maestro escribe tu duda: tu maestro te responde ahí mismo.", scroll: "Preguntar a mi maestro" },
   { title: "Cambia tu contraseña", text: "En Mi cuenta, arriba a la derecha, cambias tu contraseña cuando quieras.", action: "account" }
 ];
@@ -619,6 +620,11 @@ async function enterApp() {
       ${dipHtml}
       <p><strong>Fecha de inicio:</strong> ${esc(st.startDate || "—")} &nbsp; <strong>Generación:</strong> ${st.generation ? esc(st.generation) : "—"}</p>
       <div id="docs-${st.id}"><p class="muted">Cargando documentos…</p></div>
+      <div style="margin-top:10px"><h3>Datos para pagar</h3>
+        <p class="muted">Los datos bancarios de tu maestro para pagar por transferencia. Cópialos y paga sin salir del portal.</p>
+        <div id="payinfo-box-${st.id}"><p class="muted">Cargando datos de pago…</p></div>
+        <div id="payinfo-msg-${st.id}" class="okmsg"></div>
+      </div>
       <div style="margin-top:10px"><h3>Mis pagos</h3>
         <p class="muted">Pagas por transferencia bancaria y subes aquí la foto de tu comprobante. Elige las semanas que estás pagando: el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027, según la fecha de cada clase).</p>
         <div id="pay-list-${st.id}"><p class="muted">Cargando tus pagos…</p></div>
@@ -638,7 +644,7 @@ async function enterApp() {
     </div>`;
   }).join("");
   if (nextClassInfo) { renderNextClassHero(); tickCountdown(); cdTimer = setInterval(tickCountdown, 1000); }
-  for (const st of list) { renderDocs($("docs-" + st.id), st); setupMaterialBlock(st); setupWorkBlock(st); setupQuestionsBlock(st); setupPaymentsBlock(st, courses[st.courseId] || {}); }
+  for (const st of list) { renderDocs($("docs-" + st.id), st); setupMaterialBlock(st); setupWorkBlock(st); setupQuestionsBlock(st); setupPaymentsBlock(st, courses[st.courseId] || {}); setupPaymentInfoBlock(st); }
   // Botón "Ver todas las novedades" de la tarjeta de novedades.
   const btnNewsAll = $("btn-news-all");
   if (btnNewsAll) btnNewsAll.addEventListener("click", () => {
@@ -947,6 +953,76 @@ function renderAccount() {
         : "No se pudo cambiar: " + (e.message || code));
     } finally { $("btn-change-pass").disabled = false; }
   });
+}
+
+// ---------- Datos para pagar (datos bancarios del maestro) ----------
+// El alumno ve los datos bancarios de SU maestro para pagar por
+// transferencia, junto a Mis pagos, con botones para copiarlos. Los datos
+// se piden al servidor con getTeacherPaymentInfo: el navegador nunca lee
+// la colección teacherPayments directo (las reglas no dejan al alumno
+// leerla) y el servidor solo devuelve los de su maestro. Si el maestro
+// aún no los registró, se dice así y se le recuerda que puede
+// preguntarle. La tarjeta se muestra agrupada de 4 en 4; la CLABE tal
+// cual, como en la página de cursos.
+function formatCardNumber(digits) {
+  const d = String(digits || "").replace(/\D/g, "");
+  return d ? d.replace(/(\d{4})(?=\d)/g, "$1 ") : "";
+}
+// Texto para "Copiar todos los datos", igual que el botón de la página
+// de cursos: solo se incluyen los datos que existen.
+function paymentCopyText(p, teacherName) {
+  const parts = [];
+  if (p.bank) parts.push("Banco " + p.bank);
+  if (p.holder) parts.push("a nombre de " + p.holder);
+  if (p.cardNumber) parts.push("No. de tarjeta: " + formatCardNumber(p.cardNumber));
+  if (p.clabe) parts.push("CLABE: " + p.clabe);
+  return "Datos de pago Gecatech" + (teacherName ? " — " + teacherName : "") + (parts.length ? ": " + parts.join(". ") + "." : ".");
+}
+function renderPaymentInfoHtml(d, teacherName) {
+  if (!d || !d.registered || !d.payment) {
+    return `<p class="muted">Tu maestro aún no ha registrado sus datos de pago. Pregúntale por "Preguntar a mi maestro" o por WhatsApp.</p>`;
+  }
+  const p = d.payment;
+  const row = (label, value) => value
+    ? `<p><strong>${label}:</strong> ${esc(value)} <button class="small" type="button" data-pay-copy="${esc(value)}">Copiar</button></p>`
+    : "";
+  return row("Banco", p.bank) + row("Titular", p.holder)
+    + row("No. de tarjeta", formatCardNumber(p.cardNumber))
+    + row("CLABE", p.clabe)
+    + `<p><button class="small gold" type="button" data-pay-copy-all="${esc(paymentCopyText(p, teacherName))}">Copiar todos los datos</button></p>`;
+}
+async function loadTeacherPaymentInfo(st) {
+  const box = $("payinfo-box-" + st.id);
+  if (!box) return;
+  box.innerHTML = `<p class="muted">Cargando datos de pago…</p>`;
+  try {
+    const fn = firebase.functions().httpsCallable("getTeacherPaymentInfo");
+    const r = await fn({ studentId: st.id });
+    const d = r.data || {};
+    box.innerHTML = renderPaymentInfoHtml(d, st.teacherName || "");
+    wirePaymentInfoCopy(box, st);
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudieron cargar los datos de pago. <button class="small" type="button" id="btn-payinfo-retry-${st.id}">Reintentar</button></p>`;
+    const retry = $("btn-payinfo-retry-" + st.id);
+    if (retry) retry.addEventListener("click", () => loadTeacherPaymentInfo(st));
+  }
+}
+function wirePaymentInfoCopy(box, st) {
+  const msg = $("payinfo-msg-" + st.id);
+  const copyText = async (text) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
+      else throw new Error("sin portapapeles");
+      if (msg) showOk(msg, "Copiado.");
+    } catch (e) {
+      window.prompt("Copia los datos de pago:", text);
+    }
+  };
+  box.querySelectorAll("[data-pay-copy]").forEach(b => b.addEventListener("click", () => copyText(b.getAttribute("data-pay-copy") || "")));
+  box.querySelectorAll("[data-pay-copy-all]").forEach(b => b.addEventListener("click", () => copyText(b.getAttribute("data-pay-copy-all") || "")));
+}
+function setupPaymentInfoBlock(st) {
+  loadTeacherPaymentInfo(st);
 }
 
 // ---------- Mis pagos ----------
