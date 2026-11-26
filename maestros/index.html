@@ -89,7 +89,7 @@
   .ic { width:20px; height:20px; flex:none; vertical-align:-4px; margin-right:7px; color:var(--navy2); }
   @media (max-width:860px) {
     .portal-layout { grid-template-columns:1fr; }
-    .side-nav { position:fixed; top:auto; bottom:0; left:0; right:0; flex-direction:row; border-radius:0; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); gap:2px; border-bottom:0; border-top:3px solid var(--gold); }
+    .side-nav { position:fixed; top:auto; bottom:0; left:0; right:0; width:100%; z-index:1000; transform:translate3d(0,0,0); backface-visibility:hidden; will-change:transform; flex-direction:row; border-radius:0; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); gap:2px; border-bottom:0; border-top:3px solid var(--gold); }
     .side-title, .side-note { display:none; }
     .side-nav button { flex:1; flex-direction:column; gap:3px; padding:7px 2px; font-size:10px; text-align:center; justify-content:center; }
     .side-nav button svg { width:20px; height:20px; }
@@ -518,6 +518,16 @@ function enterApp() {
   if (secEl) secEl.id = "section";
   renderSection();
 }
+// La barra inferior del teléfono a veces quedaba sin repintar al cambiar
+// de sección (había que recargar para que volviera): se fuerza su repintado
+// tras cada cambio de sección y al girar o cambiar el tamaño de la pantalla.
+function fijarBarra() {
+  const nav = $("tabs");
+  if (!nav) return;
+  void nav.offsetHeight;
+}
+window.addEventListener("resize", fijarBarra);
+window.addEventListener("orientationchange", fijarBarra);
 async function renderSection() {
   try {
     if (currentTab === "inicio") await renderInicio();
@@ -533,6 +543,7 @@ async function renderSection() {
     const s = $("section");
     if (s) s.innerHTML = `<div class="card"><h2>No se pudo cargar esta sección</h2><p class="err">${esc(e.message || e)}</p><p class="hint">Intenta recargar la página. Si el error sigue, avisa al administrador.</p></div>`;
   }
+  fijarBarra();
 }
 
 // ---------- Inicio (resumen) · v10 ----------
@@ -676,7 +687,7 @@ async function renderClasses() {
     <p class="hint">Tu semana y tu Classroom en un solo lugar: horarios y enlaces de Meet, tareas, entregas, notas y grabaciones.</p>
     <div class="row"><button class="small gold" type="button" data-scrollto="classes-cal">Ver calendario</button><button class="small" type="button" data-scrollto="classes-cr">Ver Classroom</button></div>
   </div><div id="classes-cal"></div><div id="classes-cr"></div>`;
-  s.querySelectorAll("[data-scrollto]").forEach(b => b.addEventListener("click", () => { const el = $(b.getAttribute("data-scrollto")); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }));
+  s.querySelectorAll("[data-scrollto]").forEach(b => b.addEventListener("click", () => { const el = $(b.getAttribute("data-scrollto")); if (el) { el.scrollIntoView({ behavior: "auto", block: "start" }); fijarBarra(); } }));
   if (!classroomToken) { try { await refreshClassroomToken(); } catch (e) {} }
   const real = s;
   const calBox = $("classes-cal");
@@ -2101,7 +2112,7 @@ async function renderCourses() {
   <div class="card"><h2>Cursos y Diplomados</h2>
     <p class="hint">La generación de cada alumno la elige el maestro al darlo de alta: la fecha de inicio y la duración del curso ya no la determinan. Cambia los datos y toca Guardar.</p>
     ${Object.keys(courses).length === 0 ? `<p class="hint">Aún no hay cursos cargados.</p><button id="btn-seed" class="gold">Cargar los 6 cursos de Gecatech</button><div id="seed-msg" class="okmsg"></div><div id="seed-err" class="err"></div>` : `
-    <table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Temario</th><th>Diplomados visibles</th><th></th></tr>${rows}</table>
+    <div class="table-scroll"><table><tr><th>Curso</th><th>Horario</th><th>Inicio del curso</th><th>Duración</th><th>Enlace de Google Classroom</th><th>Grabaciones</th><th>Temario</th><th>Diplomados visibles</th><th></th></tr>${rows}</table></div>
     <div id="rec-editor"></div>
     <div id="syl-editor"></div>
     <div id="course-msg" class="okmsg"></div>`}
@@ -2315,7 +2326,7 @@ async function renderTeachers() {
     <div id="nt-msg" class="okmsg"></div><div id="nt-err" class="err"></div>
   </div>
   <div class="card"><h2>Maestros registrados</h2>
-    <table><tr><th>Foto</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th>Contraseña</th><th></th></tr>
+    <div class="table-scroll"><table><tr><th>Foto</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Cursos</th><th>Classroom por curso</th><th>Estado</th><th>Contraseña</th><th></th></tr>
     ${list.map(t => `<tr><td id="teacher-photo-${t.uid}">${teacherPhotoHtml(t.photoUrl, t.name, 40)}</td><td>${esc(t.name)}</td><td>${esc(t.email)}</td>
       <td><span class="badge ${t.role === "admin" ? "admin" : "teacher"}">${t.role === "admin" ? "Admin" : t.role === "manager" ? "Gestora" : "Maestro/a"}</span></td>
       <td>${(t.courses || []).map(id => esc(courses[id] ? courses[id].name : id)).join(", ")}</td>
@@ -2323,7 +2334,7 @@ async function renderTeachers() {
       <td>${t.active === false ? '<span class="badge off">Desactivado</span>' : "Activo"}</td>
       <td>${t.passwordChangedAt ? "cambiada el " + fmtPassDate(t.passwordChangedAt) : "nunca"}</td>
       <td>${isAdmin && t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""}${isAdmin ? ` <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button>` : ""}${me.uid === OWNER_UID && t.uid !== me.uid ? ` <button class="small ghost" data-set-manager="${t.uid}">${t.role === "manager" ? "Quitar gestor" : "Hacer gestor"}</button>` : ""}${isAdmin ? ` <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button>` : ""}</td></tr>`).join("")}
-    </table>
+    </table></div>
   </div>`;
   $("btn-create-teacher").addEventListener("click", async () => {
     const name = $("nt-name").value.trim();
@@ -3326,7 +3337,7 @@ async function renderStudents() {
   const clSel = $("sel-class");
   if (clSel) clSel.addEventListener("change", (e) => { selClass = e.target.value; editingStudentId = null; renderStudents(); });
   const btnGotoClasses = $("btn-goto-classes");
-  if (btnGotoClasses) btnGotoClasses.addEventListener("click", () => { const el = $("classes-card"); if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); const cs = $("cls-course"); if (cs) cs.focus(); } });
+  if (btnGotoClasses) btnGotoClasses.addEventListener("click", () => { const el = $("classes-card"); if (el) { el.scrollIntoView({ behavior: "auto", block: "start" }); fijarBarra(); const cs = $("cls-course"); if (cs) cs.focus(); } });
   const classesCard = $("classes-card");
   if (classesCard && classTeacher && canManageClasses) bindClassManager(classesCard, classTeacher, myClasses, { scope: "alumnos", courseId: selCourse, students, onChanged: async () => { renderStudents(); } });
   const stClaseSel = $("st-clase");
@@ -3418,7 +3429,7 @@ async function renderStudents() {
     $("st-start").value = st.startDate || "";
     $("st-gen").value = st.generation || "";
     $("st-studentid").value = st.studentId || suggestedStudentId;
-    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "auto" }); fijarBarra();
   }));
   s.querySelectorAll("[data-docs]").forEach(b => b.addEventListener("click", async () => {
     const id = b.getAttribute("data-docs");
