@@ -570,6 +570,7 @@ async function renderSection() {
 // fecha, manda el orden del arreglo. audiencia: "maestros", "alumnos"
 // o "ambos".
 const PORTAL_NEWS = [
+  { date: "2026-11-26", audience: "ambos", title: "Datos de pago de tu maestro en el portal", text: "Cada maestro registra sus datos bancarios (banco, titular, tarjeta y CLABE) en el portal; sus alumnos los copian desde su curso, en Datos para pagar, para pagar por transferencia sin salir del portal." },
   { date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
   { date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
   { date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
@@ -618,7 +619,7 @@ const GUIDE_STEPS_MAESTROS = [
   { title: "Genera el enlace de Meet de tu clase", text: "En Mis clases pulsa Generar enlace fijo en tu clase: se crea un enlace fijo en tu calendario de Google y tus alumnos entran con él cada semana. En esa misma tarjeta pulsa Ver material para ver el material por semana que ven tus alumnos. La materia actual del curso la marcas tú en esa misma tarjeta (o el administrador en Cursos y Diplomados): los alumnos ven el material desde la materia en la que entraron hasta esa materia.", goto: "clases" },
   { title: "Da de alta a tus alumnos", text: "En Mis alumnos pulsa Dar de alta y escribe sus datos; el portal ya te pone el siguiente ID (GEC-…) en automático, solo confírmalo al guardar. El correo de Classroom sirve para vincular sus tareas aunque su nombre en Classroom sea distinto.", goto: "alumnos" },
   { title: "Vincula la cuenta de un alumno", text: "En la ficha del alumno pulsa Vincular cuenta existente y confirma el correo y el curso: así entra a su portal y ve todos sus cursos con un solo inicio de sesión. Si te equivocas, puedes desvincularla desde la misma ficha.", goto: "alumnos" },
-  { title: "Revisa preguntas y comprobantes", text: "En Mis alumnos están las preguntas de tus alumnos (respóndelas ahí) y los comprobantes por revisar: confirma cada pago con tu estado de cuenta. En Inicio ves cuántos hay pendientes.", goto: "alumnos" },
+  { title: "Revisa preguntas y comprobantes", text: "En Mis alumnos están las preguntas de tus alumnos (respóndelas ahí) y los comprobantes por revisar: confirma cada pago con tu estado de cuenta. En Inicio ves cuántos hay pendientes. Captura tus datos para recibir pagos en Mi cuenta (Mis datos para recibir pagos): banco, titular, número de tarjeta y CLABE; tus alumnos los copian desde su portal para pagarte.", goto: "alumnos" },
   { title: "Publica avisos", text: "En Avisos escribe avisos para tus alumnos por curso: ellos los ven en su portal.", goto: "avisos" },
   { title: "Revisa las novedades del portal", text: "En Avisos, abajo, están las Novedades del portal: lo nuevo de cada versión, como el material por semana, Mis pagos y las tareas.", goto: "avisos", scroll: "news-block" }
 ];
@@ -2710,7 +2711,7 @@ async function renderTeachers() {
       <td>${(t.courses || []).map(id => `<div style="margin-bottom:6px"><small>${esc(courses[id] ? courses[id].name : id)}</small><br><input type="url" data-teacher="${t.uid}" data-course="${id}" data-field="classroomLink" value="${esc((t.classroomLinks || {})[id] || "")}" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></div>`).join("")}</td>
       <td>${t.active === false ? '<span class="badge off">Desactivado</span>' : "Activo"}</td>
       <td>${t.passwordChangedAt ? "cambiada el " + fmtPassDate(t.passwordChangedAt) : "nunca"}</td>
-      <td>${isAdmin && t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""}${isAdmin ? ` <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button>` : ""}${me.uid === OWNER_UID && t.uid !== me.uid ? ` <button class="small ghost" data-set-manager="${t.uid}">${t.role === "manager" ? "Quitar gestor" : "Hacer gestor"}</button>` : ""}${isAdmin ? ` <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button>` : ""}</td></tr>`).join("")}
+      <td>${isAdmin && t.role !== "admin" ? `<button class="small ghost" data-toggle-user="${t.uid}" data-active="${t.active === false ? "1" : "0"}">${t.active === false ? "Activar" : "Desactivar"}</button>` : ""}${isAdmin ? ` <button class="small" data-save-classroom="${t.uid}">Guardar Classroom</button> <button class="small ghost" data-edit-teacher="${t.uid}">Editar</button> <button class="small ghost" data-pay-teacher="${t.uid}">Datos de pago</button> <button class="small ghost" data-reset-pass="${t.uid}">Restablecer</button>` : ""}${me.uid === OWNER_UID && t.uid !== me.uid ? ` <button class="small ghost" data-set-manager="${t.uid}">${t.role === "manager" ? "Quitar gestor" : "Hacer gestor"}</button>` : ""}${isAdmin ? ` <button class="small ghost" data-classes-teacher="${t.uid}">Clases</button>` : ""}</td></tr>`).join("")}
     </table></div>
   </div>`;
   $("btn-create-teacher").addEventListener("click", async () => {
@@ -2755,6 +2756,9 @@ async function renderTeachers() {
   // El correo sí se puede cambiar desde Editar: el guardado actualiza
   // juntos la cuenta de acceso y la ficha (ver openTeacherEdit).
   s.querySelectorAll("[data-edit-teacher]").forEach(b => b.addEventListener("click", () => openTeacherEdit(b.getAttribute("data-edit-teacher"))));
+  // Datos de pago de un maestro (solo el administrador): el mismo
+  // formulario que el maestro ve en Mi cuenta, prellenado.
+  s.querySelectorAll("[data-pay-teacher]").forEach(b => b.addEventListener("click", () => openTeacherPaymentForm(b.getAttribute("data-pay-teacher"), (byUid[b.getAttribute("data-pay-teacher")] || {}).name || "")));
   s.querySelectorAll("[data-classes-teacher]").forEach(b => b.addEventListener("click", () => openTeacherClasses(b.getAttribute("data-classes-teacher"), (byUid[b.getAttribute("data-classes-teacher")] || {}).name || "")));
   if (classesBoxTeacher && byUid[classesBoxTeacher]) openTeacherClasses(classesBoxTeacher, byUid[classesBoxTeacher].name || "");
   // Restablecer la contraseña de un maestro: el servidor pone una
@@ -2954,6 +2958,94 @@ async function openTeacherEdit(uid) {
   });
 }
 
+// ---------- Datos bancarios del maestro para recibir pagos ----------
+// El maestro registra banco, titular, número de tarjeta y CLABE en Mi
+// cuenta (o el administrador en Maestros ADMIN, por maestro); sus
+// alumnos los copian desde su portal, en Datos para pagar, junto a Mis
+// pagos. Se guardan en la colección `teacherPayments` (un documento por
+// maestro, id = su uid): solo él y el administrador pueden escribirlos,
+// y solo ellos los leen directo; el alumno los recibe con la callable
+// getTeacherPaymentInfo. Nunca se guarda el número con espacios: solo
+// dígitos; para mostrarse, la tarjeta se agrupa de 4 en 4.
+function digitsOnly(v) {
+  return String(v || "").replace(/\D/g, "");
+}
+function formatCardNumber(digits) {
+  const d = digitsOnly(digits);
+  return d ? d.replace(/(\d{4})(?=\d)/g, "$1 ") : "";
+}
+// Valida los datos de pago antes de guardar: banco y titular siempre;
+// al menos uno entre tarjeta y CLABE; si se da la tarjeta son 16
+// dígitos y si se da la CLABE son 18. Devuelve { ok, errors } y los
+// valores ya normalizados (solo dígitos en tarjeta y CLABE).
+function validateTeacherPayment(d) {
+  const errors = [];
+  const bank = String((d && d.bank) || "").trim();
+  const holder = String((d && d.holder) || "").trim();
+  const card = digitsOnly(d && d.cardNumber);
+  const clabe = digitsOnly(d && d.clabe);
+  if (!bank) errors.push("Escribe el banco.");
+  if (!holder) errors.push("Escribe el nombre del titular.");
+  if (!card && !clabe) errors.push("Escribe el número de tarjeta o la CLABE.");
+  if (card && card.length !== 16) errors.push("El número de tarjeta debe tener 16 dígitos.");
+  if (clabe && clabe.length !== 18) errors.push("La CLABE debe tener 18 dígitos.");
+  return { ok: errors.length === 0, errors, bank, holder, cardNumber: card, clabe };
+}
+// Guarda los datos de pago de un maestro (el propio o, si es el admin,
+// cualquiera). Recibe datos ya validados por validateTeacherPayment.
+async function saveTeacherPayment(uid, data) {
+  await db.collection("teacherPayments").doc(uid).set({
+    teacherId: uid,
+    bank: data.bank,
+    holder: data.holder,
+    cardNumber: data.cardNumber,
+    clabe: data.clabe,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedBy: me.uid,
+  }, { merge: true });
+}
+
+// Datos de pago de un maestro (solo el administrador): el mismo
+// formulario que el maestro ve en Mi cuenta, prellenado con lo guardado.
+// Se abre desde Maestros ADMIN, por maestro.
+async function openTeacherPaymentForm(uid, name) {
+  const box = $("teacher-edit-box");
+  if (!box) return;
+  let p = {};
+  try {
+    const payDoc = await db.collection("teacherPayments").doc(uid).get();
+    if (payDoc.exists) p = payDoc.data() || {};
+  } catch (e) { p = {}; }
+  box.innerHTML = `
+  <div class="card"><h2>Datos de pago: ${esc(name)}</h2>
+    <p class="hint">Sus alumnos los ven en su portal, en su curso, para copiarlos y pagar por transferencia, junto a Mis pagos. Solo el administrador y el propio maestro pueden cambiarlos.</p>
+    <div class="row">
+      <div><label>Banco</label><input id="tp-bank" value="${esc(p.bank || "")}" placeholder="Ej. Spin by Oxxo"></div>
+      <div><label>Nombre del titular</label><input id="tp-holder" value="${esc(p.holder || "")}" placeholder="Nombre como está en la tarjeta"></div>
+      <div><label>Número de tarjeta (16 dígitos)</label><input id="tp-card" inputmode="numeric" value="${esc(formatCardNumber(p.cardNumber || ""))}" placeholder="Ej. 1234 5678 9012 3456"></div>
+      <div><label>CLABE (18 dígitos)</label><input id="tp-clabe" inputmode="numeric" value="${esc(p.clabe || "")}" placeholder="18 dígitos"></div>
+    </div>
+    <div style="margin-top:14px"><button id="btn-save-teacher-pay" class="gold">Guardar datos de pago</button> <button id="btn-cancel-teacher-pay" class="ghost">Cancelar</button></div>
+    <div id="tp-msg" class="okmsg"></div><div id="tp-err" class="err"></div>
+  </div>`;
+  $("btn-cancel-teacher-pay").addEventListener("click", () => { box.innerHTML = ""; });
+  $("btn-save-teacher-pay").addEventListener("click", async () => {
+    const v = validateTeacherPayment({
+      bank: $("tp-bank").value, holder: $("tp-holder").value,
+      cardNumber: $("tp-card").value, clabe: $("tp-clabe").value,
+    });
+    showErr($("tp-err"), ""); showOk($("tp-msg"), "");
+    if (!v.ok) { showErr($("tp-err"), v.errors.join(" ")); return; }
+    $("btn-save-teacher-pay").disabled = true;
+    try {
+      await saveTeacherPayment(uid, v);
+      showOk($("tp-msg"), "Datos de pago guardados para " + name + ".");
+    } catch (e) {
+      showErr($("tp-err"), "No se pudo guardar: " + (e.message || e));
+    } finally { $("btn-save-teacher-pay").disabled = false; }
+  });
+}
+
 // ---------- Mi cuenta ----------
 // Cambio de contraseña propio: se re-autentica con la contraseña actual
 // y luego se actualiza. La contraseña NUNCA se guarda en Firestore:
@@ -2982,6 +3074,17 @@ async function renderAccount() {
     </div>
     <div style="margin-top:14px"><button id="btn-save-wa" class="gold">Guardar WhatsApp</button></div>
     <div id="wa-msg" class="okmsg"></div><div id="wa-err" class="err"></div>
+  </div>
+  <div class="card"><h2>Mis datos para recibir pagos</h2>
+    <p class="hint">Tus alumnos los ven en su portal, en su curso, para copiarlos y pagarte por transferencia, junto a Mis pagos. Solo tú y el administrador pueden cambiarlos.</p>
+    <div class="row">
+      <div><label>Banco</label><input id="pay-bank" placeholder="Ej. Spin by Oxxo"></div>
+      <div><label>Nombre del titular</label><input id="pay-holder" placeholder="Nombre como está en la tarjeta"></div>
+      <div><label>Número de tarjeta (16 dígitos)</label><input id="pay-card" inputmode="numeric" placeholder="Ej. 1234 5678 9012 3456"></div>
+      <div><label>CLABE (18 dígitos)</label><input id="pay-clabe" inputmode="numeric" placeholder="18 dígitos"></div>
+    </div>
+    <div style="margin-top:14px"><button id="btn-save-pay" class="gold">Guardar mis datos de pago</button></div>
+    <div id="pay-msg" class="okmsg"></div><div id="pay-err" class="err"></div>
   </div>
   <div class="card"><h2>Mi calendario de Google</h2>
     <p class="hint">Conecta tu calendario de Google para que el portal genere el enlace fijo de Meet de cada una de tus clases directamente en tu calendario. Tus alumnos entran a su clase con ese enlace desde su portal.</p>
@@ -3033,6 +3136,31 @@ async function renderAccount() {
     } catch (e) {
       showErr($("wa-err"), "No se pudo guardar: " + (e.message || e));
     } finally { $("btn-save-wa").disabled = false; }
+  });
+  // Mis datos para recibir pagos: se cargan los guardados (si hay) y se
+  // guardan solo dígitos, con validación antes de escribir.
+  try {
+    const payDoc = await db.collection("teacherPayments").doc(me.uid).get();
+    const p = payDoc.exists ? (payDoc.data() || {}) : {};
+    if ($("pay-bank")) $("pay-bank").value = p.bank || "";
+    if ($("pay-holder")) $("pay-holder").value = p.holder || "";
+    if ($("pay-card")) $("pay-card").value = formatCardNumber(p.cardNumber || "");
+    if ($("pay-clabe")) $("pay-clabe").value = p.clabe || "";
+  } catch (e) { /* sin datos guardados: el formulario queda vacío */ }
+  $("btn-save-pay").addEventListener("click", async () => {
+    const v = validateTeacherPayment({
+      bank: $("pay-bank").value, holder: $("pay-holder").value,
+      cardNumber: $("pay-card").value, clabe: $("pay-clabe").value,
+    });
+    showErr($("pay-err"), ""); showOk($("pay-msg"), "");
+    if (!v.ok) { showErr($("pay-err"), v.errors.join(" ")); return; }
+    $("btn-save-pay").disabled = true;
+    try {
+      await saveTeacherPayment(me.uid, v);
+      showOk($("pay-msg"), "Datos de pago guardados.");
+    } catch (e) {
+      showErr($("pay-err"), "No se pudo guardar: " + (e.message || e));
+    } finally { $("btn-save-pay").disabled = false; }
   });
   $("btn-change-pass").addEventListener("click", async () => {
     const cur = $("pw-cur").value;
