@@ -30,6 +30,9 @@
   button.ghost:hover { background:#eaf2f9; }
   button.small { padding:6px 10px; font-size:13px; }
   button:disabled { opacity:.55; cursor:default; }
+  a.btn { display:inline-block; background:var(--navy); color:#fff; border:0; border-radius:10px; padding:10px 16px; font-size:15px; font-weight:600; text-decoration:none; box-shadow:0 1px 3px rgba(3,62,110,.16); }
+  a.btn.gold { background:var(--gold); color:#231f00; font-weight:700; }
+  a.btn.small { padding:6px 10px; font-size:13px; }
   input, select, textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; font-size:15px; background:#fff; color:var(--text); }
   input:focus, select:focus, textarea:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(4,108,196,.16); outline:none; }
   label { display:block; font-size:13px; font-weight:600; color:var(--muted); margin:14px 0 4px; }
@@ -63,6 +66,12 @@
   .home-num { font-size:19px; font-weight:900; color:var(--navy); font-family:"Nunito","Segoe UI",system-ui,sans-serif; }
   .home-txt { color:var(--muted); font-size:14px; }
   .home-actions { margin-top:auto; }
+  /* ---------- Guía "Primeros pasos" y novedades ---------- */
+  .guide-steps { margin:10px 0 0; padding-left:22px; display:flex; flex-direction:column; gap:12px; }
+  .guide-steps li::marker { font-weight:800; color:var(--navy); }
+  .guide-steps li p { margin:2px 0 6px; }
+  .guide-overlay { position:fixed; inset:0; background:rgba(2,39,65,.72); z-index:2000; display:flex; align-items:flex-start; justify-content:center; padding:24px 14px; overflow:auto; }
+  .guide-overlay .card { max-width:640px; width:100%; margin:0; }
   .home-next { grid-column:span 2; background:linear-gradient(130deg,#022741 0%,var(--navy) 50%,var(--navy2) 100%); color:#fff; border:0; border-bottom:3px solid var(--gold); flex-direction:row; align-items:center; gap:14px; flex-wrap:wrap; }
   .home-next .home-body { flex:1; min-width:200px; display:flex; flex-direction:column; gap:2px; }
   .home-next .home-kicker { color:var(--gold); }
@@ -263,6 +272,7 @@ const OWNER_UID = "K8wtJKKNkkg1Pv9bmBxxlgdpdSG3"; // UID de Auth de Anghelo,
                         // botón "Hacer admin" ya no existe).
 let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
 let currentTab = "inicio";
+let scrollToAfterNav = ""; // bloque al que bajar tras navegar (p. ej. "news-block")
 let selCourse = "";
 let selTeacher = "";
 let editingStudentId = null;
@@ -272,7 +282,8 @@ let myClasses = [];       // clases del maestro seleccionado (se cargan en rende
 let editingClassId = null; // clase en edición en el formulario de clases
 let classesBoxTeacher = ""; // maestro cuyo gestor de clases está abierto en la pestaña Maestros (admin)
 let diplomasCatalog = []; // [{id, name}] catálogo de diplomados (se carga en renderStudents/renderCourses)
-let renderStudentsGen = 0; // contador de generación de renderStudents(): un render obsoleto (llegó uno más nuevo mientras esperaba) se descarta en vez de redibujar la sección
+let renderStudentsGen = 0;
+let paymentsQueueStudents = []; // alumnos visibles cuya cola de comprobantes se muestra en Mis alumnos // contador de generación de renderStudents(): un render obsoleto (llegó uno más nuevo mientras esperaba) se descarta en vez de redibujar la sección
 
 function showErr(el, msg) { el.textContent = msg; }
 function showOk(el, msg) { el.textContent = msg; }
@@ -483,17 +494,18 @@ function enterApp() {
     avisos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.6 3.2H4.4z"/><path d="M10 21a2.2 2.2 0 0 0 4 0"/></svg>',
     maestros: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c.8-3.6 3.7-5.4 7.5-5.4s6.7 1.8 7.5 5.4"/></svg>',
     cursos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6c-1.5-1.2-3.5-1.8-6-1.8v13c2.5 0 4.5.6 6 1.8 1.5-1.2 3.5-1.8 6-1.8v-13c-2.5 0-4.5.6-6 1.8z"/><path d="M12 6v12.8"/></svg>',
-    cuenta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h9M19 8h1M4 16h3M11 16h9"/><circle cx="16" cy="8" r="2.2"/><circle cx="9" cy="16" r="2.2"/></svg>'
+    cuenta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h9M19 8h1M4 16h3M11 16h9"/><circle cx="16" cy="8" r="2.2"/><circle cx="9" cy="16" r="2.2"/></svg>',
+    guia: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 0 1 4.9.8c0 1.6-2.5 2-2.5 3.4"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>'
   };
   // Menú lateral (en el celular, barra inferior): mismo orden para todos;
   // solo cambian las secciones de administración según el rol. La gestora
   // ve Maestros pero no Cursos y Diplomados; un maestro normal no ve
   // ninguna de las dos.
   const defs = isAdmin
-    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["cursos", "Cursos y Diplomados", "ADMIN"], ["cuenta", "Mi cuenta", ""]]
+    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["cursos", "Cursos y Diplomados", "ADMIN"], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]]
     : isManager
-    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["cuenta", "Mi cuenta", ""]]
-    : [["inicio", "Inicio", ""], ["alumnos", "Mis alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["cuenta", "Mi cuenta", ""]];
+    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]]
+    : [["inicio", "Inicio", ""], ["alumnos", "Mis alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]];
   const sideTitle = document.createElement("p");
   sideTitle.className = "side-title";
   sideTitle.textContent = "Menú";
@@ -517,6 +529,9 @@ function enterApp() {
   const secEl = document.getElementById("section") || document.getElementById("section-real");
   if (secEl) secEl.id = "section";
   renderSection();
+  // Primera visita: se muestra la guía sola, salvo que haya que cambiar
+  // la contraseña primero o ya se esté viendo la guía.
+  if (me.mustChangePassword !== true && currentTab !== "guia" && !guideSeenMaestros()) showGuideOverlay();
 }
 // La barra inferior del teléfono a veces quedaba sin repintar al cambiar
 // de sección (había que recargar para que volviera): se fuerza su repintado
@@ -533,6 +548,7 @@ async function renderSection() {
     if (currentTab === "inicio") await renderInicio();
     else if (currentTab === "clases") await renderClasses();
     else if (currentTab === "avisos") await renderAvisos();
+    else if (currentTab === "guia") renderGuide();
     else if (currentTab === "maestros") await renderTeachers();
     else if (currentTab === "cursos") await renderCourses();
     else if (currentTab === "classroom") await renderClassroom();
@@ -546,6 +562,117 @@ async function renderSection() {
   fijarBarra();
 }
 
+// ---------- Novedades del portal ----------
+// Las novedades viven EN EL CÓDIGO, no en Firestore: cada vez que se
+// publica una versión nueva con funciones, se agregan las entradas aquí
+// y el tablero las muestra solo, sin que nadie tenga que escribir nada
+// en el portal. La más reciente va primero; si dos tienen la misma
+// fecha, manda el orden del arreglo. audiencia: "maestros", "alumnos"
+// o "ambos".
+const PORTAL_NEWS = [
+  { date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
+  { date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
+  { date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
+  { date: "2026-11-26", audience: "ambos", title: "Pregunta a tu maestro desde el portal", text: "Puedes escribirle una pregunta a tu maestro desde tu curso y ver su respuesta ahí mismo; tu maestro las responde desde Mis alumnos." },
+  { date: "2026-11-26", audience: "ambos", title: "Paga por transferencia y sube tu comprobante", text: "Elige las semanas que pagas, el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027) y sube la foto de tu comprobante; tu maestro lo confirma." },
+  { date: "2026-11-26", audience: "ambos", title: "Tus tareas y calificaciones en el portal", text: "En Mis tareas ves tus tareas de Classroom, si ya las entregaste y tu calificación, aunque tu nombre en Classroom sea distinto: se vinculan por tu correo." },
+  { date: "2026-11-26", audience: "maestros", title: "Confirmar antes de vincular una cuenta", text: "Al vincular la cuenta de un alumno, el portal te pide confirmar el correo y el curso antes de hacerlo." },
+  { date: "2026-11-26", audience: "maestros", title: "Desvincular la cuenta de un alumno", text: "Si un alumno ya no debe ver un curso, puedes desvincular su cuenta desde su ficha; su cuenta sigue existiendo para sus otros cursos." },
+  { date: "2026-11-26", audience: "maestros", title: "Eliminar el evento de Meet de una clase", text: "En Mis clases puedes eliminar el evento de Meet: se borra de tu calendario de Google y los alumnos dejan de ver el enlace." },
+  { date: "2026-11-26", audience: "ambos", title: "Los botones ya se ven como botones", text: "Entrar a Meet, Entrar a la clase y Ver comprobante ahora se ven como botones dorados, no como enlaces de texto." },
+  { date: "2026-11-26", audience: "ambos", title: "Si te rechazan un comprobante, puedes reenviarlo", text: "Un comprobante rechazado se puede volver a enviar; si se envía 3 veces en el mismo día, queda bloqueado hasta el día siguiente. Uno pagado o en revisión no se puede volver a usar." },
+  { date: "2026-11-26", audience: "ambos", title: "Tus tareas se vinculan por tu correo", text: "Aunque tu nombre en Classroom sea distinto al del portal, tus tareas y calificaciones se encuentran por tu correo electrónico (Classroom) de tu ficha." }
+];
+// Fecha "YYYY-MM-DD" a ms (inicio del día local). 0 si no se puede leer.
+function newsDateMs(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ""));
+  if (!m) return 0;
+  return new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0).getTime();
+}
+// ¿La novedad es de los últimos 14 días? (hoy sí; una fecha futura, no).
+function isNewsNew(dateStr, nowMs) {
+  const ms = newsDateMs(dateStr);
+  if (!ms) return false;
+  const now = typeof nowMs === "number" ? nowMs : Date.now();
+  return ms <= now && (now - ms) < 14 * 24 * 60 * 60 * 1000;
+}
+// Novedades para una audiencia ("maestros" o "alumnos"), de la más
+// reciente a la más antigua. No muta el arreglo original.
+function newsForAudience(list, audience) {
+  return (list || []).filter(n => n && (n.audience === audience || n.audience === "ambos"))
+    .map((n, i) => ({ n, i }))
+    .sort((a, b) => (newsDateMs(b.n.date) - newsDateMs(a.n.date)) || (a.i - b.i))
+    .map(x => x.n);
+}
+function newsItemHtml(n, nowMs) {
+  return `<p><strong>${esc(n.title || "Novedad")}</strong>${isNewsNew(n.date, nowMs) ? ` <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">Nuevo</span>` : ""} <span class="muted">${fmtAvDate(newsDateMs(n.date))}</span><br>${esc(n.text || "")}</p>`;
+}
+// ---------- Guía "Primeros pasos" ----------
+// Contenido en el código (no editable desde el portal): cada vez que se
+// agrega una función, se agrega su paso aquí. Se muestra sola la primera
+// vez que se entra (marca en localStorage) y queda siempre en el menú
+// ("Guía") y en Inicio.
+const GUIDE_KEY_MAESTROS = "gecatechGuideSeenMaestros";
+const GUIDE_STEPS_MAESTROS = [
+  { title: "Conecta Classroom, Drive y Calendario", text: "En Mi cuenta conecta tus cuentas de Google: Classroom para las tareas y el material, Drive para respaldar los documentos y Calendario para generar los enlaces de Meet.", goto: "cuenta" },
+  { title: "Genera el enlace de Meet de tu clase", text: "En Mis clases pulsa Generar enlace fijo en tu clase: se crea un enlace fijo en tu calendario de Google y tus alumnos entran con él cada semana. En esa misma tarjeta pulsa Ver material para ver el material por semana que ven tus alumnos. La materia actual del curso la marcas tú en esa misma tarjeta (o el administrador en Cursos y Diplomados): los alumnos ven el material desde la materia en la que entraron hasta esa materia.", goto: "clases" },
+  { title: "Da de alta a tus alumnos", text: "En Mis alumnos pulsa Dar de alta y escribe sus datos; el portal ya te pone el siguiente ID (GEC-…) en automático, solo confírmalo al guardar. El correo de Classroom sirve para vincular sus tareas aunque su nombre en Classroom sea distinto.", goto: "alumnos" },
+  { title: "Vincula la cuenta de un alumno", text: "En la ficha del alumno pulsa Vincular cuenta existente y confirma el correo y el curso: así entra a su portal y ve todos sus cursos con un solo inicio de sesión. Si te equivocas, puedes desvincularla desde la misma ficha.", goto: "alumnos" },
+  { title: "Revisa preguntas y comprobantes", text: "En Mis alumnos están las preguntas de tus alumnos (respóndelas ahí) y los comprobantes por revisar: confirma cada pago con tu estado de cuenta. En Inicio ves cuántos hay pendientes.", goto: "alumnos" },
+  { title: "Publica avisos", text: "En Avisos escribe avisos para tus alumnos por curso: ellos los ven en su portal.", goto: "avisos" },
+  { title: "Revisa las novedades del portal", text: "En Avisos, abajo, están las Novedades del portal: lo nuevo de cada versión, como el material por semana, Mis pagos y las tareas.", goto: "avisos", scroll: "news-block" }
+];
+function guideGotoLabel(tab) {
+  return { cuenta: "Mi cuenta", clases: "Mis clases", alumnos: "Mis alumnos", avisos: "Avisos", inicio: "Inicio", guia: "Guía" }[tab] || "la sección";
+}
+function guideStepsHtml(steps, withButtons) {
+  return `<ol class="guide-steps">` + steps.map(st => `<li><strong>${esc(st.title)}</strong><p>${esc(st.text)}</p>${withButtons && st.goto ? `<button class="small" type="button" data-guide-goto="${st.goto}"${st.scroll ? ` data-guide-scroll="${st.scroll}"` : ""}>Ir a ${esc(guideGotoLabel(st.goto))}</button>` : ""}</li>`).join("") + `</ol>`;
+}
+function renderGuide() {
+  const s = $("section");
+  s.innerHTML = `
+  <div class="card"><h2>Guía: primeros pasos</h2>
+    <p class="hint">Qué hacer primero al entrar al portal y cómo usar cada función, en orden. Esta guía apareció sola la primera vez que entraste; vuelve aquí cuando quieras.</p>
+    ${guideStepsHtml(GUIDE_STEPS_MAESTROS, true)}
+  </div>`;
+  wireGuideButtons(s);
+}
+function wireGuideButtons(root) {
+  (root || document).querySelectorAll("[data-guide-goto]").forEach(b => b.addEventListener("click", () => {
+    const scroll = b.getAttribute("data-guide-scroll");
+    if (scroll) scrollToAfterNav = scroll;
+    markGuideSeenMaestros();
+    currentTab = b.getAttribute("data-guide-goto");
+    closeGuideOverlay();
+    enterApp();
+  }));
+}
+// Primera visita: la guía se abre sola encima de la sección, con un botón
+// para cerrarla. La marca vive en localStorage de este navegador.
+function guideSeenMaestros() {
+  try { return localStorage.getItem(GUIDE_KEY_MAESTROS) === "1"; } catch (e) { return true; }
+}
+function markGuideSeenMaestros() {
+  try { localStorage.setItem(GUIDE_KEY_MAESTROS, "1"); } catch (e) {}
+}
+function showGuideOverlay() {
+  if ($("guide-overlay")) return;
+  const ov = document.createElement("div");
+  ov.className = "guide-overlay";
+  ov.id = "guide-overlay";
+  ov.innerHTML = `<div class="card"><h2>Guía: primeros pasos</h2>
+    <p class="hint">Bienvenido/a al portal de maestros. Esto es lo primero que debes hacer, en orden:</p>
+    ${guideStepsHtml(GUIDE_STEPS_MAESTROS, true)}
+    <div style="margin-top:16px"><button class="gold" type="button" id="btn-guide-ok">Entendido, empezar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  wireGuideButtons(ov);
+  $("btn-guide-ok").addEventListener("click", () => { markGuideSeenMaestros(); closeGuideOverlay(); });
+}
+function closeGuideOverlay() {
+  const ov = $("guide-overlay");
+  if (ov) ov.remove();
+}
 // ---------- Inicio (resumen) · v10 ----------
 // Iniciales de un nombre ("Mónica Tintos" -> "MT").
 function initialsOf(name) {
@@ -643,6 +770,8 @@ async function renderInicio() {
     } catch (e) {}
   }
   const pendingTasks = await countPendingGrading();
+  const pendingQuestions = await countPendingQuestions();
+  const pendingPayments = await countPendingPayments();
   const nextLine = next
     ? DAYS_ES[next.date.getDay()] + " " + String(next.date.getHours()).padStart(2, "0") + ":" + String(next.date.getMinutes()).padStart(2, "0") + " · " + next.courseName
     : "Sin próxima clase";
@@ -658,6 +787,7 @@ async function renderInicio() {
   const avTxt = latestAv
     ? esc(latestAv.title || "Aviso") + " · " + fmtAvDate(latestAv.createdAt)
     : "Aún no hay avisos publicados.";
+  const newsLatest = newsForAudience(PORTAL_NEWS, "maestros").slice(0, 3);
   s.innerHTML = `
   <div class="home-band"><h2 class="home-head">Inicio</h2><p class="home-sub">Hola, ${esc(me.name || "")} (${esc(who)}): tu día de un vistazo, sin buscar en cada sección.</p></div>
   <div class="home-grid">
@@ -668,10 +798,13 @@ async function renderInicio() {
     </article>
     <article class="home-card"><span class="home-kicker">Mis alumnos</span><strong class="home-num">${studentCount === null ? "—" : studentCount + (studentCount === 1 ? " alumno" : " alumnos")}</strong><span class="home-txt">${esc(studentsTxt)}</span><div class="home-actions"><button class="small" type="button" data-goto="alumnos">Ver Mis alumnos</button></div></article>
     <article class="home-card"><span class="home-kicker">Classroom</span><strong class="home-num">${pendingTasks === null ? "Sin conexión" : pendingTasks + (pendingTasks === 1 ? " tarea por revisar" : " tareas por revisar")}</strong><span class="home-txt">${esc(tasksTxt)}</span><div class="home-actions"><button class="small" type="button" data-goto="clases">Revisar tareas</button></div></article>
-    <article class="home-card"><span class="home-kicker">Pagos</span><strong class="home-num">En la ficha del alumno</strong><span class="home-txt">Este portal no lleva el registro de pagos: se revisa en la ficha de cada alumno, en Mis alumnos.</span><div class="home-actions"><button class="small" type="button" data-goto="alumnos">Ver pagos</button></div></article>
+    <article class="home-card"><span class="home-kicker">Comprobantes por revisar</span><strong class="home-num">${pendingPayments === null ? "—" : "Comprobantes por revisar: " + pendingPayments}</strong><span class="home-txt">${pendingPayments === null ? "No se pudieron contar los comprobantes en este momento." : pendingPayments === 0 ? "No hay comprobantes pendientes de revisión." : "Tus alumnos esperan que confirmes sus pagos."}</span><div class="home-actions"><button class="small" type="button" data-goto="alumnos">Revisar comprobantes</button></div></article>
     <article class="home-card"><span class="home-kicker">Avisos</span><strong class="home-num">${avTotal === 0 ? "Sin avisos" : avTotal + (avTotal === 1 ? " aviso" : " avisos")}</strong><span class="home-txt">${avTxt}</span><div class="home-actions"><button class="small" type="button" data-goto="avisos">Ver Avisos</button></div></article>
+    <article class="home-card"><span class="home-kicker">Preguntas de alumnos</span><strong class="home-num">${pendingQuestions === null ? "—" : "Preguntas sin responder: " + pendingQuestions}</strong><span class="home-txt">${pendingQuestions === null ? "No se pudieron contar las preguntas en este momento." : pendingQuestions === 0 ? "No hay preguntas pendientes." : "Tus alumnos esperan tu respuesta."}</span><div class="home-actions"><button class="small" type="button" data-goto="alumnos">Ver preguntas</button></div></article>
+    <article class="home-card"><span class="home-kicker">Novedades del portal</span><strong class="home-num">${newsLatest.length ? esc(newsLatest[0].title) : "Sin novedades"}</strong>${newsLatest.length && isNewsNew(newsLatest[0].date) ? ` <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">Nuevo</span>` : ""}<span class="home-txt">${newsLatest.length > 1 ? esc(newsLatest.slice(1).map(n => n.title).join(" · ")) : (newsLatest.length ? "Solo hay una novedad por ahora." : "Aún no hay novedades publicadas.")}</span><div class="home-actions"><button class="small" type="button" data-goto="avisos" data-scroll="news-block">Ver todas las novedades</button></div></article>
+    <article class="home-card"><span class="home-kicker">Guía rápida</span><strong class="home-num">Primeros pasos</strong><span class="home-txt">Qué hacer primero al entrar y cómo usar cada función del portal.</span><div class="home-actions"><button class="small" type="button" data-goto="guia">Ver la guía</button></div></article>
   </div>`;
-  s.querySelectorAll("[data-goto]").forEach(b => b.addEventListener("click", () => { currentTab = b.getAttribute("data-goto"); enterApp(); }));
+  s.querySelectorAll("[data-goto]").forEach(b => b.addEventListener("click", () => { const scroll = b.getAttribute("data-scroll"); if (scroll) scrollToAfterNav = scroll; currentTab = b.getAttribute("data-goto"); enterApp(); }));
 }
 
 // ---------- Mis clases: Calendario + Classroom juntos · v10 ----------
@@ -738,7 +871,14 @@ async function renderAvisos() {
     </div>
     <div style="margin-top:10px"><button id="btn-publish-av" class="gold">Publicar aviso</button></div>
     <div id="av-msg" class="okmsg"></div><div id="av-err" class="err"></div>
+  </div>
+  <div class="card" id="news-block"><h2>Novedades del portal</h2>
+    <p class="hint">Lo nuevo del portal, sin que tengas que buscarlo: cada versión trae sus novedades aquí, de la más reciente a la más antigua.</p>
+    ${newsForAudience(PORTAL_NEWS, "maestros").map(n => newsItemHtml(n)).join("") || `<p class="muted">Aún no hay novedades.</p>`}
   </div>`;
+  // Si se llegó desde Inicio ("Ver todas las novedades"), se baja directo
+  // al bloque de novedades.
+  if (scrollToAfterNav === "news-block") { scrollToAfterNav = ""; const nb = $("news-block"); if (nb) nb.scrollIntoView({ behavior: "auto", block: "start" }); }
   const avCourseSel = $("av-course");
   if (avCourseSel) avCourseSel.addEventListener("change", (e) => { avCourse = e.target.value; avTeacher = ""; renderAvisos(); });
   const avTeacherSel = $("av-teacher");
@@ -1161,6 +1301,44 @@ function crPerson(c, uid) {
   }
   return { name: uid, photoUrl: "" };
 }
+// Normaliza un correo para compararlo: minúsculas y sin espacios.
+function normEmail(v) { return String(v || "").trim().toLowerCase(); }
+// Normaliza un nombre para compararlo: minúsculas, sin acentos,
+// espacios recortados y colapsados (igual que en Cloud Functions).
+function normPersonName(name) {
+  return String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+// Relaciona una entrada del roster de Classroom con una ficha del
+// portal: PRIMERO POR CORREO (el correo de Classroom contra el campo
+// `email` de la ficha, o `accountEmail` de su cuenta vinculada), y solo
+// si no hay correo o no coincide con ninguna ficha, por nombre
+// normalizado. Si el correo coincide con más de una ficha, no se
+// adivina y devuelve null. Así el nombre del portal se mantiene
+// independiente del nombre en Classroom.
+function matchPortalStudent(rosterEntry, portalStudents) {
+  const em = normEmail(rosterEntry && rosterEntry.email);
+  if (em) {
+    const byEmail = (portalStudents || []).filter(st => normEmail(st.email || st.accountEmail) === em);
+    if (byEmail.length === 1) return byEmail[0];
+    if (byEmail.length > 1) return null;
+  }
+  const nm = normPersonName(rosterEntry && rosterEntry.name);
+  if (!nm) return null;
+  const byName = (portalStudents || []).filter(st => normPersonName(st.name) === nm);
+  return byName.length === 1 ? byName[0] : null;
+}
+// Nombre para mostrar de un alumno de Classroom en la vista del
+// maestro: el nombre de Classroom, y si su ficha del portal tiene otro
+// nombre, se añade entre paréntesis para que el maestro sepa quién es
+// (ej. "Pao Vázquez (en el portal: Paola Loera)").
+function crStudentLabel(c, uid) {
+  const p = crPerson(c, uid);
+  const portal = c && c.portalByUid ? c.portalByUid[uid] : null;
+  if (portal && portal.name && normPersonName(portal.name) !== normPersonName(p.name)) {
+    return p.name + " (en el portal: " + portal.name + ")";
+  }
+  return p.name;
+}
 function crIsTurned(sub) {
   return sub.state === "TURNED_IN" || sub.state === "RETURNED" || sub.state === "REJECTED";
 }
@@ -1219,11 +1397,11 @@ function crRenderTaskSubs(courseId, work) {
   const byName = (a, b) => crPerson(c, a.userId).name.localeCompare(crPerson(c, b.userId).name, "es");
   const done = subs.filter(crIsTurned).sort(byName).map(x => {
     const p = crPerson(c, x.userId);
-    return crPhotoHtml(p, p.name) + " " + esc(p.name) + (x.late ? " (tarde)" : "") + (x.state === "REJECTED" ? " (devuelta)" : "");
+    return crPhotoHtml(p, p.name) + " " + esc(crStudentLabel(c, x.userId)) + (x.late ? " (tarde)" : "") + (x.state === "REJECTED" ? " (devuelta)" : "");
   });
   const pend = subs.filter(x => !crIsTurned(x)).sort(byName).map(x => {
     const p = crPerson(c, x.userId);
-    return crPhotoHtml(p, p.name) + " " + esc(p.name);
+    return crPhotoHtml(p, p.name) + " " + esc(crStudentLabel(c, x.userId));
   });
   const pending = subs.filter(x => x.state === "TURNED_IN" && x.assignedGrade == null);
   let html = `<b>Entregaron (${done.length}):</b> ${done.length ? done.join(", ") : "nadie todavía."}<br><b>Faltan (${pend.length}):</b> ${pend.length ? pend.join(", ") : "nadie."}`;
@@ -1233,7 +1411,7 @@ function crRenderTaskSubs(courseId, work) {
     html += pending.map(x => {
       const p = crPerson(c, x.userId);
       const pre = (x.draftGrade != null) ? x.draftGrade : "";
-      return `<div class="docline" style="margin:6px 0"><span>${crPhotoHtml(p, p.name)} ${esc(p.name)}</span><span><input type="number" min="0" max="${work.maxPoints || 100}" value="${pre}" id="cr-grade-${esc(work.id)}-${esc(x.id)}" style="width:64px" aria-label="Nota"> / ${work.maxPoints || 100} <button class="small gold" data-grade-save="${esc(work.id)}|${esc(x.id)}">Guardar nota</button> <button class="small ghost" data-grade-return="${esc(work.id)}|${esc(x.id)}|${esc(x.userId)}">Devolver</button> <span class="okmsg" id="cr-grade-msg-${esc(work.id)}-${esc(x.id)}"></span></span></div>`;
+      return `<div class="docline" style="margin:6px 0"><span>${crPhotoHtml(p, p.name)} ${esc(crStudentLabel(c, x.userId))}</span><span><input type="number" min="0" max="${work.maxPoints || 100}" value="${pre}" id="cr-grade-${esc(work.id)}-${esc(x.id)}" style="width:64px" aria-label="Nota"> / ${work.maxPoints || 100} <button class="small gold" data-grade-save="${esc(work.id)}|${esc(x.id)}">Guardar nota</button> <button class="small ghost" data-grade-return="${esc(work.id)}|${esc(x.id)}|${esc(x.userId)}">Devolver</button> <span class="okmsg" id="cr-grade-msg-${esc(work.id)}-${esc(x.id)}"></span></span></div>`;
     }).join("");
   }
   namesBox.innerHTML = html;
@@ -1262,7 +1440,7 @@ function crRenderTaskSubs(courseId, work) {
     const workId = parts[0], subId = parts[1], uid = parts[2];
     const p = crPerson(c, uid);
     const msgEl = $("cr-grade-msg-" + workId + "-" + subId);
-    if (!confirm("¿Devolver esta tarea a " + p.name + "?")) return;
+    if (!confirm("¿Devolver esta tarea a " + crStudentLabel(c, uid) + "?")) return;
     b.disabled = true;
     try {
       await classroomWrite("/courses/" + encodeURIComponent(courseId) + "/courseWork/" + encodeURIComponent(workId) + "/studentSubmissions/" + encodeURIComponent(subId) + ":return", "POST", {});
@@ -1289,7 +1467,7 @@ function renderCrGrades(courseId) {
   const subOf = (uid, workId) => (c.subsByWork[workId] || []).find(s => s.userId === uid);
   let html = `<div class="table-scroll"><table class="students"><tr><th>Alumno</th>` + works.map(w => `<th title="${esc(w.title || "Tarea")}">${esc((w.title || "Tarea").slice(0, 18))}</th>`).join("") + `<th></th></tr>`;
   students.forEach((st, i) => {
-    html += `<tr><td>${crPhotoHtml(st, st.name)} ${esc(st.name)}</td>` + works.map(w => {
+    html += `<tr><td>${crPhotoHtml(st, st.name)} ${esc(crStudentLabel(c, st.userId))}</td>` + works.map(w => {
       const s = subOf(st.userId, w.id);
       const g = s ? crGradeText(s, w.maxPoints || 100) : "";
       return `<td>${g ? esc(g) : "—"}</td>`;
@@ -1326,7 +1504,7 @@ async function crExportGrades(courseId) {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Entregas");
     const works = c.works || [];
-    const students = Object.keys(c.roster || {}).map(uid => ({ userId: uid, name: c.roster[uid].name })).sort((a, b) => a.name.localeCompare(b.name, "es"));
+    const students = Object.keys(c.roster || {}).map(uid => ({ userId: uid, name: crStudentLabel(c, uid) })).sort((a, b) => a.name.localeCompare(b.name, "es"));
     ws.columns = [{ width: 32 }].concat(works.map(() => ({ width: 16 })));
     ws.addRow(["Alumno"].concat(works.map(w => w.title || "Tarea")));
     students.forEach(st => {
@@ -1474,15 +1652,32 @@ async function showCourseWork(courseId) {
   try {
     const data = await classroomFetch(crCourseWorkListUrl(courseId));
     const works = data.courseWork || [];
-    // Lista de alumnos (nombre y foto por userId) y maestros del curso.
+    // Lista de alumnos (nombre, foto y correo por userId) y maestros del curso.
     const roster = {};
     try {
       const st = await classroomFetch("/courses/" + encodeURIComponent(courseId) + "/students?pageSize=100");
       (st.students || []).forEach(s => {
         const prof = s.profile || {};
-        roster[s.userId] = { name: (prof.name && prof.name.fullName) || s.userId, photoUrl: prof.photoUrl || "" };
+        roster[s.userId] = { name: (prof.name && prof.name.fullName) || s.userId, photoUrl: prof.photoUrl || "", email: prof.emailAddress || "" };
       });
     } catch (e) { /* sin lista no se pueden mostrar nombres; se sigue con userIds */ }
+    // Fichas del portal de este curso, para vincular cada alumno de
+    // Classroom con su ficha por correo (y por nombre como respaldo).
+    // Si no se pueden cargar, la vista sigue igual sin la anotación.
+    let portalByUid = {};
+    try {
+      const portalCourse = Object.entries(courses || {}).find(([, cc]) => {
+        const m = /classroom\.google\.com\/c\/([A-Za-z0-9_-]+)/.exec((cc && cc.classroomUrl) || "");
+        return m && m[1] === courseId;
+      });
+      if (portalCourse) {
+        const portalStudents = await fetchStudents(portalCourse[0], me ? me.uid : "");
+        Object.entries(roster).forEach(([uid, r]) => {
+          const match = matchPortalStudent(r, portalStudents);
+          if (match) portalByUid[uid] = match;
+        });
+      }
+    } catch (e) { portalByUid = {}; }
     const teachers = {};
     try {
       const t = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/teachers?pageSize=50");
@@ -1502,7 +1697,7 @@ async function showCourseWork(courseId) {
     let materials = null;
     const mData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/courseWorkMaterial?pageSize=20");
     if (mData) materials = mData.courseWorkMaterial || [];
-    crCache[courseId] = { works, roster, teachers, subsByWork: {}, topics, announcements, materials, subsReady: null, nwMaterials: [] };
+    crCache[courseId] = { works, roster, teachers, portalByUid, subsByWork: {}, topics, announcements, materials, subsReady: null, nwMaterials: [] };
     const topicOptions = (topics || []).map(t => `<option value="${esc(t.topicId)}">${esc(t.name)}</option>`).join("");
     const rosterEntries = Object.entries(roster).sort((a, b) => (a[1].name || "").localeCompare(b[1].name || "", "es"));
     box.innerHTML = `
@@ -1541,7 +1736,7 @@ async function showCourseWork(courseId) {
           <div><label>Para</label>
             <label class="radio"><input type="radio" name="cr-nw-who-${esc(courseId)}" value="all" checked> Todos los alumnos</label>
             ${rosterEntries.length ? `<label class="radio"><input type="radio" name="cr-nw-who-${esc(courseId)}" value="some"> Solo algunos alumnos</label>
-            <div id="cr-nw-who-list-${esc(courseId)}" class="hidden">${rosterEntries.map(([uid, r]) => `<label class="check"><input type="checkbox" value="${esc(uid)}"> ${esc(r.name || uid)}</label>`).join("")}</div>` : `<p class="muted">No se pudo cargar la lista de alumnos: la tarea irá para todos.</p>`}
+            <div id="cr-nw-who-list-${esc(courseId)}" class="hidden">${rosterEntries.map(([uid, r]) => `<label class="check"><input type="checkbox" value="${esc(uid)}"> ${esc(crStudentLabel(crCache[courseId], uid))}</label>`).join("")}</div>` : `<p class="muted">No se pudo cargar la lista de alumnos: la tarea irá para todos.</p>`}
           </div>
           <div><label>Puntos</label>
             <div class="row"><input id="cr-nw-points-${esc(courseId)}" type="number" min="0" value="100" style="width:90px"><label class="check"><input type="checkbox" id="cr-nw-nograde-${esc(courseId)}"> Sin calificar</label></div>
@@ -1969,6 +2164,155 @@ function buildWeekCalendar(courseId, syllabus) {
   });
   return weeks;
 }
+// ---------- Filtro de material por materia de entrada ----------
+// Cada alumno ve el material solo desde la materia en la que entró,
+// hacia adelante: visible = módulos con índice >= módulo de entrada
+// del alumno y <= módulo actual del curso. Lo anterior a su entrada
+// queda oculto; lo nuevo aparece conforme se publica. El módulo de
+// entrada se deriva de la semana de entrada del alumno (su fecha de
+// inicio contra el inicio del curso); el módulo actual, de la semana
+// actual del curso (courses/{id}.currentClass, que se elige a mano con
+// el selector de materia o el de semana: ambos escriben lo mismo).
+// La semana del curso NUNCA se le muestra al alumno: solo el nombre
+// de la materia. Sin temario o sin fecha de ingreso definible no se
+// filtra nada: se muestra todo como antes.
+function normTopicName(s) {
+  return String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function moduleTitlesOf(calendar) {
+  const out = [];
+  (Array.isArray(calendar) ? calendar : []).forEach(wk => { const t = (wk && wk.module) || ""; if (t && !out.includes(t)) out.push(t); });
+  return out;
+}
+function moduleIndexOfWeek(calendar, weekIdx0) {
+  if (!Array.isArray(calendar) || !calendar.length || weekIdx0 == null || weekIdx0 < 0) return null;
+  const wk = calendar[Math.min(weekIdx0, calendar.length - 1)];
+  if (!wk) return null;
+  return moduleTitlesOf(calendar).indexOf(wk.module || "");
+}
+function firstWeekIdxOfModule(calendar, moduleIdx) {
+  const titles = moduleTitlesOf(calendar);
+  const title = titles[moduleIdx];
+  if (title == null) return null;
+  for (let i = 0; i < (Array.isArray(calendar) ? calendar : []).length; i++) if (((calendar[i] || {}).module || "") === title) return i;
+  return null;
+}
+// "YYYY-MM-DD" -> ms de medianoche local, o null.
+function ymdMillis(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? "" : s).trim());
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return isNaN(d) ? null : d.getTime();
+}
+// Primera semana (1-based) cuya fecha de clase cae en o después del
+// ingreso del alumno. Sin fecha de ingreso o sin inicio del curso no se
+// puede derivar: null (entonces no se filtra). Misma cuenta que las
+// semanas pagables: inicio del curso + pasos de 7 días.
+function entryWeek1Based(courseStart, studentStart) {
+  const cs = String(courseStart || "").slice(0, 10);
+  const ss = String(studentStart || "").slice(0, 10);
+  const csMs = ymdMillis(cs);
+  if (csMs == null || !/^\d{4}-\d{2}-\d{2}$/.test(ss)) return null;
+  if (ss <= cs) return 1;
+  const ssMs = ymdMillis(ss);
+  if (ssMs == null) return null;
+  return 1 + Math.ceil((ssMs - csMs) / (7 * 24 * 60 * 60 * 1000));
+}
+// Prefijo numérico del título: "3.1 — ..." -> "3.1"; null si no lo tiene.
+function topicNumberOf(title) {
+  const m = /^\s*(\d+)\.(\d+)\b/.exec(String(title || ""));
+  return m ? (m[1] + "." + m[2]) : null;
+}
+// ¿El título es el documento del temario completo? Se oculta del alumno.
+function isTemarioTitle(title) {
+  return /^\s*temario\b/i.test(String(title || ""));
+}
+// Índice del módulo al que pertenece un nombre de tema de Classroom
+// (normalizado): exacto, uno contiene al otro, o todas sus palabras
+// están en el módulo. null si no casa con ningún módulo.
+function moduleIdxForTopicName(topicName, moduleTitles) {
+  const nt = normTopicName(topicName);
+  if (!nt) return null;
+  const norms = (moduleTitles || []).map(normTopicName);
+  let i = norms.indexOf(nt);
+  if (i >= 0) return i;
+  for (let k = 0; k < norms.length; k++) {
+    if (norms[k] && (norms[k].includes(nt) || nt.includes(norms[k]))) return k;
+  }
+  const words = nt.split(" ").filter(w => w.length > 2);
+  if (words.length) {
+    for (let k = 0; k < norms.length; k++) {
+      if (words.every(w => norms[k].includes(w))) return k;
+    }
+  }
+  return null;
+}
+// Clasifica un material de Classroom a un módulo del temario:
+// { kind: "module", idx } | { kind: "general" } | { kind: "temario" }.
+// PRIMERO por el nombre del tema de Classroom; SEGUNDO por el prefijo
+// numérico del título combinado con el tema (el número solo no basta:
+// en Administrativo el 1.1 se repite entre módulos). Sin tema que case
+// y sin número: "Material general", que sigue visible (Reglamento,
+// Introducción a plataformas.), salvo el documento "Temario", que se oculta.
+function classifyMaterialModule(m, topics, syllabus) {
+  const title = (m && m.title) || "";
+  if (isTemarioTitle(title)) return { kind: "temario" };
+  const modules = (Array.isArray(syllabus) ? syllabus : []).map(x => (x && x.title) || "");
+  const topic = (topics || []).find(t => t && t.topicId === (m && m.topicId));
+  const topicName = topic ? (topic.name || "") : "";
+  const byTopic = moduleIdxForTopicName(topicName, modules);
+  if (byTopic !== null) return { kind: "module", idx: byTopic };
+  const num = topicNumberOf(title);
+  if (num) {
+    const cands = [];
+    (Array.isArray(syllabus) ? syllabus : []).forEach((mod, mi) => {
+      (Array.isArray(mod.topics) ? mod.topics : []).forEach(t => {
+        if (topicNumberOf(t) === num) cands.push(mi);
+      });
+    });
+    const uniq = [...new Set(cands)];
+    if (uniq.length === 1) return { kind: "module", idx: uniq[0] };
+    if (uniq.length > 1) {
+      const byTopic2 = moduleIdxForTopicName(topicName, uniq.map(i => modules[i]));
+      if (byTopic2 !== null) return { kind: "module", idx: uniq[byTopic2] };
+    }
+  }
+  return { kind: "general" };
+}
+// Filtro de material para un alumno: { syllabus, entryModuleIdx,
+// currentModuleIdx, entryModuleTitle, currentModuleTitle } o null si no
+// se puede filtrar (sin temario o sin fecha de ingreso definible): en
+// ese caso se muestra todo como antes. course: {startDate, syllabus,
+// currentClass}; student: {startDate}. Sin semana actual definida el
+// tope es la última materia.
+function materialFilterFor(courseId, course, student) {
+  const syllabus = (course && Array.isArray(course.syllabus)) ? course.syllabus : [];
+  const calendar = buildWeekCalendar(courseId, syllabus);
+  if (!calendar.length) return null;
+  const entryWeek = entryWeek1Based(course && course.startDate, student && student.startDate);
+  if (entryWeek == null) return null;
+  const entryModuleIdx = moduleIndexOfWeek(calendar, entryWeek - 1);
+  if (entryModuleIdx == null) return null;
+  const titles = moduleTitlesOf(calendar);
+  const curWeekIdx = storedToWeekIdx(calendar, course && course.currentClass);
+  const currentModuleIdx = curWeekIdx == null ? titles.length - 1 : moduleIndexOfWeek(calendar, curWeekIdx);
+  if (currentModuleIdx == null) return null;
+  return { syllabus, entryModuleIdx, currentModuleIdx, entryModuleTitle: titles[entryModuleIdx] || "", currentModuleTitle: titles[currentModuleIdx] || "" };
+}
+// Opciones del selector de materia: una por módulo del curso.
+function moduleOptionsHtml(calendar, selectedModuleIdx) {
+  return moduleTitlesOf(calendar).map((t, i) => `<option value="${i}"${i === selectedModuleIdx ? " selected" : ""}>${esc(t)}</option>`).join("");
+}
+// ¿Puede la usuaria actual marcar la materia actual de esta clase? El
+// admin siempre; la maestra, solo en sus propias clases o en los cursos
+// de su lista. La regla de Firestore /courses solo le deja cambiar
+// currentClass en los cursos que imparte (ver firestore.rules), así que
+// el selector solo se le muestra donde también puede guardarlo.
+function canMarkModule(cls, me, isAdminFlag) {
+  if (isAdminFlag) return true;
+  if (!cls || !me) return false;
+  return cls.teacherId === me.uid || ((me.courses || []).includes(cls.courseId));
+}
 // Semana (índice 0-based) a la que pertenece un índice global de tema.
 function topicIndexToWeekIdx(calendar, topicIdx) {
   if (!calendar.length || typeof topicIdx !== "number") return null;
@@ -2088,7 +2432,7 @@ async function renderCalendar() {
   const colHtml = byDay.map((list, i) => `<td style="vertical-align:top;width:14%"><strong>${CAL_DAYS[i]}</strong>${list.length ? list.map(c => {
     const course = courses[c.courseId] || {};
     const meet = (c.meetUrl || "").trim();
-    return `<div style="border:1px solid var(--line);border-radius:10px;padding:8px;margin-top:8px"><strong>${esc(course.name || c.courseId)}</strong><br><span class="muted">${(isAdmin || isManager) ? esc(teacherNames[c.teacherId] || "") + "<br>" : ""}${esc(classScheduleText(c.days, c.startTime, c.endTime))}</span><br>${meet ? `<a href="${esc(meet)}" target="_blank" rel="noopener">Entrar a Meet</a>` : `<span class="muted">Sin enlace de Meet</span>`}</div>`;
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:8px;margin-top:8px"><strong>${esc(course.name || c.courseId)}</strong><br><span class="muted">${(isAdmin || isManager) ? esc(teacherNames[c.teacherId] || "") + "<br>" : ""}${esc(classScheduleText(c.days, c.startTime, c.endTime))}</span><br>${meet ? `<a class="btn gold small" href="${esc(meet)}" target="_blank" rel="noopener">Entrar a Meet</a>` : `<span class="muted">Sin enlace de Meet</span>`}</div>`;
   }).join("") : `<p class="muted">—</p>`}</td>`).join("");
   s.innerHTML = `<div class="card"><h2>Calendario de la escuela</h2>
     <p class="hint">Todas las clases de la semana con su horario y su enlace de Meet.${(isAdmin || isManager) ? " Ves las clases de todas las maestras." : ""}</p>
@@ -2190,7 +2534,7 @@ function renderRecEditor(courseId) {
     <p class="hint">Pega aquí el enlace de cada clase grabada (normalmente el enlace de Google Drive de la grabación de Meet). Los alumnos la verán en su tarjeta del curso.</p>
     ${recs.length ? recs.map((r, i) => `<div class="docline"><span>${esc(r.title || "Grabación")}</span><span class="muted">${esc(r.date || "")}</span>
       <a target="_blank" rel="noopener" href="${esc(r.url || "")}">Abrir</a>
-      <a href="#" data-rec-del="${i}">Quitar</a></div>`).join("") : `<p class="hint">Aún no hay grabaciones en este curso.</p>`}
+      <button type="button" class="small ghost" data-rec-del="${i}" style="color:var(--err)">Quitar</button></div>`).join("") : `<p class="hint">Aún no hay grabaciones en este curso.</p>`}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
       <input id="rec-title" placeholder="Título (ej. Clase 10 – Lean Manufacturing – 24 nov 2026)" style="flex:2;min-width:220px">
       <input id="rec-url" type="url" placeholder="Enlace de la grabación (Google Drive)" style="flex:2;min-width:220px">
@@ -2241,6 +2585,7 @@ function renderSylEditor(courseId) {
   const initialText = syllabusToText(hasSyl ? c.syllabus : (def || []));
   const calendar = buildWeekCalendar(courseId, c.syllabus || []);
   const curWeek = storedToWeekIdx(calendar, c.currentClass);
+  const curModuleIdx = moduleIndexOfWeek(calendar, curWeek);
   box.innerHTML = `
   <div class="card" style="margin-top:12px"><h3>Temario — ${esc(c.name)}</h3>
     <p class="hint">Un tema por línea. Las líneas que empiezan con # son el nombre del módulo o materia. ${def && !hasSyl ? "Abajo viene el temario de la planeación: revísalo y toca Guardar temario." : "El maestro elige en qué semana va cada alumno y el portal muestra las que le faltan."}</p>
@@ -2249,6 +2594,11 @@ function renderSylEditor(courseId) {
         <option value="">Sin definir</option>
         ${weekOptionsHtml(calendar, curWeek)}
       </select></div></div>
+    <div class="row"><div><label>Materia actual del curso (la que estás dando)</label>
+      <select id="syl-module" ${calendar.length ? "" : "disabled"}>
+        <option value="">Sin definir</option>
+        ${moduleOptionsHtml(calendar, curModuleIdx)}
+      </select><br><span class="muted">Al elegir la materia, la semana actual pasa a su primera semana; los alumnos ven el material desde la materia en la que entraron hasta esta materia.</span></div></div>
     <div id="syl-course-progress" style="margin-top:8px">${progressCourseHtml(calendar, curWeek)}</div>
     <div style="margin-top:12px"><label>Temario (un tema por línea; # = módulo o materia)</label>
     <textarea id="syl-text" rows="14" style="width:100%">${esc(initialText)}</textarea></div>
@@ -2264,13 +2614,40 @@ function renderSylEditor(courseId) {
         await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
         delete courses[courseId].currentClass;
         $("syl-course-progress").innerHTML = progressCourseHtml(calendar, null);
+        const sm = $("syl-module"); if (sm) sm.value = "";
         showOk($("syl-msg"), "Semana actual del curso sin definir.");
       } else {
         const idx = parseInt(v, 10);
         await db.collection("courses").doc(courseId).update({ currentClass: { week: idx } });
         courses[courseId].currentClass = { week: idx };
         $("syl-course-progress").innerHTML = progressCourseHtml(calendar, idx);
+        const sm = $("syl-module"); if (sm) sm.value = String(moduleIndexOfWeek(calendar, idx));
         showOk($("syl-msg"), "Semana actual del curso guardada.");
+      }
+    } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
+  });
+  // Selector de materia: guarda en courses/{id}.currentClass la primera
+  // semana de la materia elegida (la misma fuente de verdad que el
+  // selector de semana); al cambiar uno, el otro se actualiza solo.
+  const sylMod = $("syl-module");
+  if (sylMod) sylMod.addEventListener("change", async () => {
+    const v = sylMod.value;
+    showErr($("syl-err"), ""); showOk($("syl-msg"), "");
+    try {
+      if (v === "") {
+        await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
+        delete courses[courseId].currentClass;
+        $("syl-course-progress").innerHTML = progressCourseHtml(calendar, null);
+        if (sylSel) sylSel.value = "";
+        showOk($("syl-msg"), "Materia actual sin definir.");
+      } else {
+        const wk = firstWeekIdxOfModule(calendar, parseInt(v, 10));
+        if (wk == null) return;
+        await db.collection("courses").doc(courseId).update({ currentClass: { week: wk } });
+        courses[courseId].currentClass = { week: wk };
+        $("syl-course-progress").innerHTML = progressCourseHtml(calendar, wk);
+        if (sylSel) sylSel.value = String(wk);
+        showOk($("syl-msg"), "Materia actual guardada: " + (moduleTitlesOf(calendar)[parseInt(v, 10)] || "") + ".");
       }
     } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
   });
@@ -2960,6 +3337,80 @@ async function propagateClassMeetUrl(classId, url, list) {
   });
   await batch.commit();
 }
+// ---------- Material por semana para el maestro ----------
+// El maestro ve el mismo material por semana que ven sus alumnos: los
+// temas y materiales (courseWorkMaterial) del Classroom del curso,
+// agrupados por tema, con la misma función getStudentCourseMaterials
+// (ya desplegada) y el mismo agrupado que el portal de alumnos. Solo
+// lectura: el material se sube en Classroom, no desde el portal.
+// La función del servidor pide un studentId: el material es del curso
+// (no del alumno), así que sirve cualquier alumno inscrito en ese
+// curso; se prefiere uno de esta misma clase.
+// Elegir el alumno para pedir el material del curso: primero uno de
+// esta misma clase; si no hay, cualquiera del curso y del maestro.
+// Devuelve el id de la ficha o "" si no hay ningún alumno del curso.
+function pickStudentIdForClassMaterials(students, teacherId, courseId, classId) {
+  const list = (students || []).filter(st => st && st.teacherId === teacherId && st.courseId === courseId && st.id);
+  if (!list.length) return "";
+  const exact = classId ? list.find(st => st.classId === classId) : null;
+  return (exact || list[0]).id || "";
+}
+// Enlaces de un material de Classroom (Drive, enlace, YouTube, formulario).
+function materialLinksOf(m) {
+  const out = [];
+  (Array.isArray(m.materials) ? m.materials : []).forEach(att => {
+    if (att.driveFile && att.driveFile.driveFile) {
+      const f = att.driveFile.driveFile;
+      out.push({ url: f.alternateLink || "", label: f.title || "Archivo de Drive" });
+    } else if (att.link) {
+      out.push({ url: att.link.url || "", label: att.link.title || att.link.url || "Enlace" });
+    } else if (att.youtubeVideo) {
+      out.push({ url: att.youtubeVideo.alternateLink || "", label: att.youtubeVideo.title || "Video de YouTube" });
+    } else if (att.form) {
+      out.push({ url: att.form.formUrl || "", label: att.form.title || "Formulario" });
+    }
+  });
+  return out.filter(l => l.url);
+}
+// Material agrupado por tema, igual que en el portal de alumnos: cada
+// tema con sus materiales y al final el "Material general" sin tema.
+// Con filter (ver materialFilterFor) solo se muestran los materiales
+// desde la materia de entrada del alumno hasta la materia actual; el
+// documento "Temario" nunca se muestra. Sin filter se muestra todo.
+function renderMaterialsHtml(data, filter) {
+  const topics = Array.isArray(data.topics) ? data.topics : [];
+  const materials = Array.isArray(data.materials) ? data.materials : [];
+  if (!materials.length) return `<p class="muted">Aún no hay material publicado en Classroom para este curso.</p>`;
+  let list = materials;
+  if (filter) {
+    list = materials.filter(m => {
+      const c = classifyMaterialModule(m, topics, filter.syllabus);
+      if (c.kind === "temario") return false;
+      if (c.kind === "general") return true;
+      return c.idx >= filter.entryModuleIdx && c.idx <= filter.currentModuleIdx;
+    });
+    if (!list.length) return `<p class="muted">Aún no hay material publicado para las materias que ve este alumno.</p>`;
+  }
+  const byTopic = {};
+  const general = [];
+  list.forEach(m => {
+    const tid = m.topicId || "";
+    if (tid && topics.some(t => t.topicId === tid)) (byTopic[tid] = byTopic[tid] || []).push(m);
+    else general.push(m);
+  });
+  const matHtml = (m) => {
+    const links = materialLinksOf(m);
+    return `<p><strong>${esc(m.title || "Material")}</strong>${m.updateTime ? ` <span class="muted">${fmtAvDate(m.updateTime)}</span>` : ""}${m.description ? `<br>${esc(m.description)}` : ""}${links.length ? `<br>` + links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join(" · ") : ""}</p>`;
+  };
+  let html = "";
+  topics.forEach(t => {
+    const list = byTopic[t.topicId] || [];
+    if (!list.length) return;
+    html += `<h3 style="font-size:15px">${esc(t.name)}</h3>` + list.map(matHtml).join("");
+  });
+  if (general.length) html += `<h3 style="font-size:15px">Material general</h3>` + general.map(matHtml).join("");
+  return html;
+}
 // Gestor de clases: lista + formulario de registro/edición. Se usa en la
 // pestaña Alumnos (solo el curso seleccionado) y en la pestaña Maestros
 // (admin: todas las clases de un maestro). ctx: {scope, courseId, students
@@ -2979,13 +3430,25 @@ function classManagerHtml(teacher, list, ctx) {
     const weekSel = calendar.length
       ? `<div style="margin-top:6px"><label style="font-weight:normal">Semana actual de esta clase</label><select data-class-week="${c.id}" style="max-width:260px"><option value="">Sin definir</option>${weekOptionsHtml(calendar, ownWk)}</select>${ownWk === null && effWk !== null ? ` <span class="muted">(hereda la semana del curso)</span>` : ""}</div>`
       : "";
+    // Materia actual del curso: escribe lo mismo que el selector de
+    // semana del curso (courses/{id}.currentClass = primera semana de
+    // la materia elegida), así selector y Avance quedan sincronizados.
+    // La ve el admin y la maestra de esta clase (canMarkModule); la
+    // regla de Firestore solo le deja a la maestra cambiar currentClass
+    // en los cursos que imparte, así que en cursos ajenos no aparece.
+    const curModuleIdx = calendar.length ? moduleIndexOfWeek(calendar, storedToWeekIdx(calendar, course.currentClass)) : null;
+    const moduleSel = (calendar.length && ctx.scope !== "maestros" && canMarkModule(c, me, isAdmin))
+      ? `<div style="margin-top:6px"><label style="font-weight:normal">Materia actual del curso</label><select data-course-module="${c.courseId}" style="max-width:260px"><option value="">Sin definir</option>${moduleOptionsHtml(calendar, curModuleIdx)}</select> <span class="muted">Los alumnos ven el material desde la materia en la que entraron hasta esta materia.</span></div>`
+      : "";
     // Enlace de Meet de la clase: se escribe a mano o se genera fijo en el
     // calendario de la maestra. El enlace viaja a las fichas de sus alumnos.
     const meet = (c.meetUrl || "").trim();
     const meetHtml = meet
-      ? `<div style="margin-top:6px"><span class="muted">Meet:</span> <a href="${esc(meet)}" target="_blank" rel="noopener">Entrar a la clase</a> <button class="small ghost" data-meet-copy="${esc(meet)}">Copiar enlace</button> <button class="small ghost" data-meet-regen="${c.id}">Generar uno nuevo</button></div>`
+      ? `<div style="margin-top:6px"><span class="muted">Meet:</span> <a class="btn gold small" href="${esc(meet)}" target="_blank" rel="noopener">Entrar a la clase</a> <button class="small ghost" data-meet-copy="${esc(meet)}">Copiar enlace</button> <button class="small ghost" data-meet-regen="${c.id}">Generar uno nuevo</button> <button class="small ghost" data-meet-delete="${c.id}" style="color:var(--err)">Eliminar evento de Meet</button></div>`
       : `<div style="margin-top:6px"><label style="font-weight:normal">Enlace de Meet</label><div class="row"><input type="url" data-meet-input="${c.id}" placeholder="Pega el enlace de Meet de esta clase…" style="flex:1"><button class="small" data-meet-save="${c.id}">Guardar enlace</button><button class="small gold" data-meet-generate="${c.id}">Generar enlace fijo</button></div><span class="muted">O genera el enlace fijo en tu calendario de Google (conéctalo en Mi cuenta).</span></div>`;
-    return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(c.label || classFullLabel(c.courseId, c.days, c.startTime, c.endTime))}</strong>${count !== null ? ` <span class="muted">· ${count} alumno${count === 1 ? "" : "s"}</span>` : ""}<br><span class="muted">${effWk !== null && calendar.length ? esc("Va en: Semana " + (effWk + 1) + " de " + calendar.length) : "Semana actual sin definir"}</span>${weekSel}${meetHtml}</div><div><button class="small ghost" data-edit-class="${c.id}">Editar</button> <button class="small ghost" data-del-class="${c.id}" style="color:var(--err)">Eliminar</button></div></div>`;
+    // Material por semana de la clase: lo mismo que ven los alumnos.
+    const matHtml = `<div style="margin-top:6px"><button class="small gold" type="button" data-class-material="${c.id}" data-course-id="${esc(c.courseId || "")}" data-teacher-id="${esc(c.teacherId || teacher.uid || "")}">Ver material</button><div id="mat-box-${c.id}" style="margin-top:8px"></div></div>`;
+    return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(c.label || classFullLabel(c.courseId, c.days, c.startTime, c.endTime))}</strong>${count !== null ? ` <span class="muted">· ${count} alumno${count === 1 ? "" : "s"}</span>` : ""}<br><span class="muted">${effWk !== null && calendar.length ? esc("Va en: Semana " + (effWk + 1) + " de " + calendar.length) : "Semana actual sin definir"}</span>${weekSel}${moduleSel}${meetHtml}${matHtml}</div><div><button class="small ghost" data-edit-class="${c.id}">Editar</button> <button class="small ghost" data-del-class="${c.id}" style="color:var(--err)">Eliminar</button></div></div>`;
   }).join("");
   const dayChecks = [1, 2, 3, 4, 5, 6, 0].map(d => `<label style="display:inline-block;margin:4px 10px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="cls-day" value="${d}" style="width:auto"> ${DAYS_ES[d]}</label>`).join("");
   return `
@@ -3026,6 +3489,26 @@ function bindClassManager(box, teacher, list, ctx) {
       await ctx.onChanged();
     } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo guardar la semana: " + (e.message || e)); }
   }));
+  // Selector de materia actual del curso: guarda en courses/{id}
+  // currentClass la primera semana de la materia elegida (la misma
+  // fuente de verdad que el selector de semana del curso).
+  box.querySelectorAll("[data-course-module]").forEach(sel => sel.addEventListener("change", async () => {
+    const courseId = sel.getAttribute("data-course-module");
+    const v = sel.value;
+    try {
+      if (v === "") {
+        await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
+        delete courses[courseId].currentClass;
+      } else {
+        const calendar = buildWeekCalendar(courseId, (courses[courseId] || {}).syllabus || []);
+        const wk = firstWeekIdxOfModule(calendar, parseInt(v, 10));
+        if (wk == null) return;
+        await db.collection("courses").doc(courseId).update({ currentClass: { week: wk } });
+        courses[courseId].currentClass = { week: wk };
+      }
+      await ctx.onChanged();
+    } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo guardar la materia actual: " + (e.message || e)); }
+  }));
   box.querySelectorAll("[data-edit-class]").forEach(b => b.addEventListener("click", () => {
     editingClassId = b.getAttribute("data-edit-class");
     ctx.onChanged();
@@ -3038,6 +3521,16 @@ function bindClassManager(box, teacher, list, ctx) {
     try {
       const n = await countStudentsInClass(cl.teacherId, cl.courseId, id, list);
       if (n > 0) { showErr(box.querySelector("#cls-err"), "Esta clase tiene " + n + " alumno(s). Primero cambia a esos alumnos a otra clase."); return; }
+      // Si la clase tiene evento de Meet en Google, intentar borrarlo
+      // primero (best-effort: si falla, la clase se borra igual y el
+      // evento puede quedar huérfano en el calendario de la maestra).
+      if ((cl.meetEventId || "").trim()) {
+        try {
+          await loadFunctionsScript();
+          const delFn = firebase.functions().httpsCallable("deleteClassMeetEvent");
+          await delFn({ classId: id });
+        } catch (e) { /* no bloquea el borrado de la clase */ }
+      }
       await db.collection("classes").doc(id).delete();
       await ctx.onChanged();
       const m = document.querySelector("#cls-msg"); if (m) showOk(m, "Clase eliminada.");
@@ -3087,6 +3580,76 @@ function bindClassManager(box, teacher, list, ctx) {
       if (m) showOk(m, r.data && r.data.existing ? "Esta clase ya tenía su enlace de Meet." : "Enlace de Meet generado: " + url);
     } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo generar el enlace: " + (e.message || e)); }
     finally { b.disabled = false; }
+  }));
+  box.querySelectorAll("[data-meet-delete]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-meet-delete");
+    if (!confirm("¿Eliminar el evento de Meet de esta clase? Se borrará de su calendario de Google y los alumnos dejarán de ver el enlace para entrar.")) return;
+    showErr(box.querySelector("#cls-err"), ""); showOk(box.querySelector("#cls-msg"), "");
+    b.disabled = true;
+    try {
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("deleteClassMeetEvent");
+      const r = await fn({ classId: id });
+      await ctx.onChanged();
+      const m = document.querySelector("#cls-msg");
+      if (m) showOk(m, "Evento de Meet eliminado." + (r.data && r.data.warning ? " " + r.data.warning : ""));
+    } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo eliminar el evento de Meet: " + (e.message || e)); }
+    finally { b.disabled = false; }
+  }));
+  // Material por semana de la clase: lo mismo que ven los alumnos,
+  // agrupado por tema. Se pide con la ficha de un alumno del curso
+  // (el material es del curso, no del alumno).
+  box.querySelectorAll("[data-class-material]").forEach(b => b.addEventListener("click", async () => {
+    const classId = b.getAttribute("data-class-material");
+    const courseId = b.getAttribute("data-course-id") || "";
+    const teacherId = b.getAttribute("data-teacher-id") || "";
+    const mbox = box.querySelector("#mat-box-" + classId);
+    if (!mbox) return;
+    if (mbox.dataset.open === "1") {
+      mbox.innerHTML = "";
+      mbox.dataset.open = "";
+      b.textContent = "Ver material";
+      return;
+    }
+    mbox.dataset.open = "1";
+    b.textContent = "Ocultar material";
+    b.disabled = true;
+    mbox.innerHTML = `<p class="muted">Cargando material…</p>`;
+    try {
+      let studentId = pickStudentIdForClassMaterials(ctx.students, teacherId, courseId, classId);
+      let student = (ctx.students || []).find(x => x && x.id === studentId) || null;
+      if (!studentId) {
+        // En la vista de admin no vienen las fichas en el contexto: se
+        // busca una ficha del curso directo en Firestore.
+        const snap = await db.collection("students").where("teacherId", "==", teacherId).where("courseId", "==", courseId).limit(1).get();
+        if (!snap.empty) { studentId = snap.docs[0].id; student = { id: snap.docs[0].id, ...snap.docs[0].data() }; }
+      }
+      if (!studentId) {
+        mbox.innerHTML = `<p class="muted">Esta clase aún no tiene alumnos. El material por semana se muestra cuando haya al menos un alumno inscrito en el curso.</p>`;
+        return;
+      }
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("getStudentCourseMaterials");
+      const r = await fn({ studentId });
+      const d = r.data || {};
+      if (!d.connected) {
+        mbox.innerHTML = `<p class="muted">${d.reason === "no-classroom" ? "Este curso aún no tiene Classroom enlazado." : "La cuenta de Classroom de esta clase aún no está conectada."}</p>`;
+        return;
+      }
+      // El mismo filtro que ven los alumnos: desde la materia en la que
+      // entró este alumno hasta la materia actual del curso.
+      const filter = materialFilterFor(courseId, courses[courseId] || {}, student || {});
+      const who = student && student.name ? esc(student.name) : "este alumno";
+      if (filter) {
+        mbox.innerHTML = `<p class="muted">Vista de ${who}: material desde la materia ${esc(filter.entryModuleTitle)} hasta ${esc(filter.currentModuleTitle)}.</p>` + renderMaterialsHtml(d, filter);
+      } else {
+        mbox.innerHTML = `<p class="muted">Vista de ${who}: se muestra todo el material (el curso no tiene temario o la ficha no tiene fecha de inicio).</p>` + renderMaterialsHtml(d);
+      }
+    } catch (e) {
+      mbox.innerHTML = `<p class="err">No se pudo cargar el material. Inténtalo de nuevo.</p>`;
+    } finally {
+      b.disabled = false;
+    }
   }));
   if (saveBtn) saveBtn.addEventListener("click", async () => {
     const courseId = courseSel ? courseSel.value : "";
@@ -3145,6 +3708,230 @@ async function openTeacherClasses(uid, name) {
   }
 }
 
+// ---------- Preguntas de alumnos ----------
+// Los alumnos escriben directo en la colección `questions` y el maestro
+// responde directo, sin pasar por el servidor. El maestro consulta solo
+// las suyas (teacherId == su uid); el admin y la gestora consultan todas.
+// Sin orderBy (evita necesitar un índice compuesto): se ordena en el
+// cliente, pendientes primero y luego por fecha descendente.
+function sortQuestionsForTeacher(list) {
+  return [...list].sort((a, b) => {
+    const pa = a.status === "pendiente" ? 0 : 1;
+    const pb = b.status === "pendiente" ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return tsMillis(b.createdAt) - tsMillis(a.createdAt);
+  });
+}
+async function fetchQuestions() {
+  let snap;
+  if (isAdmin || isManager) snap = await db.collection("questions").get();
+  else snap = await db.collection("questions").where("teacherId", "==", me.uid).get();
+  const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+  return sortQuestionsForTeacher(out);
+}
+async function countPendingQuestions() {
+  try {
+    const list = await fetchQuestions();
+    return list.filter(q => q.status === "pendiente").length;
+  } catch (e) { return null; }
+}
+// ---------- Mis pagos: comprobantes por revisar ----------
+// El alumno sube su comprobante directo en la subcolección `payments` de
+// su ficha y el maestro lo confirma o lo rechaza directo, sin pasar por
+// el servidor. El maestro solo ve los de sus alumnos; el admin y la
+// gestora ven todos (misma visibilidad que fetchExistingStudentIds).
+// LÍMITE HONESTO: el comprobante por sí solo no confirma que el dinero
+// llegó a la cuenta; el maestro lo confirma con su estado de cuenta
+// antes de pulsar "Confirmar pago" (el texto está en la cola).
+// La lista de alumnos de Inicio solo trae los IDs de constancia
+// (GEC-xxxx), que no sirven para leer subcolecciones: por eso el conteo
+// hace su propia consulta de fichas visibles (mismo patrón de visibilidad)
+// y luego lee los pagos pendientes de cada una.
+async function fetchVisibleStudentDocIds() {
+  try {
+    let snap;
+    if (isAdmin || isManager) snap = await db.collection("students").get();
+    else snap = await db.collection("students").where("teacherId", "==", me.uid).get();
+    const ids = []; snap.forEach(d => ids.push(d.id));
+    return ids;
+  } catch (e) { return null; }
+}
+async function countPendingPayments() {
+  try {
+    const ids = await fetchVisibleStudentDocIds();
+    if (!ids) return null;
+    let n = 0;
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const snap = await db.collection("students").doc(id).collection("payments").where("status", "==", "pendiente").get();
+        n += snap.size;
+      } catch (e) {}
+    }));
+    return n;
+  } catch (e) { return null; }
+}
+function questionItemHtml(q, answererNames) {
+  const courseName = (courses[q.courseId] && courses[q.courseId].name) || q.courseId || "—";
+  const pending = q.status !== "respondida";
+  const chip = pending
+    ? `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">Pendiente</span>`
+    : `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#dcebf7;color:#0b2a4a">Respondida</span>`;
+  const answerer = (!pending && q.answeredBy) ? ((answererNames && answererNames[q.answeredBy]) || "Tu maestro/a") : "";
+  return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(q.studentName || "Alumno/a")}</strong> · ${esc(courseName)} ${chip} <span class="muted">${fmtAvDate(q.createdAt)}</span><br>${esc(q.text || "")}${pending ? "" : `<br><strong>Respuesta${answerer ? " de " + esc(answerer) : ""}:</strong> ${esc(q.answer || "")}${q.answeredAt ? ` <span class="muted">${fmtAvDate(q.answeredAt)}</span>` : ""}`}</div></div>`
+    + (pending ? `<div class="row"><div><label>Tu respuesta</label><textarea id="q-ans-${q.id}" rows="2" placeholder="Escribe tu respuesta…"></textarea></div></div><div style="margin-top:8px"><button class="small gold" data-answer-q="${q.id}">Responder</button></div><div id="q-ans-err-${q.id}" class="err"></div>` : "");
+}
+async function renderQuestionsBox() {
+  const box = $("questions-box");
+  if (!box) return;
+  try {
+    const list = await fetchQuestions();
+    if (!document.body.contains(box)) return; // otro render ya redibujó la sección
+    // Nombre de quien respondió: el propio maestro, o el maestro de la
+    // lista cuando el admin/gestora ve preguntas de otros.
+    const answererNames = {};
+    if (me) answererNames[me.uid] = me.name || "";
+    if (isAdmin || isManager) {
+      try {
+        const all = await listTeachers();
+        all.forEach(t => { if (t.uid && t.name) answererNames[t.uid] = t.name; });
+      } catch (e) {}
+    }
+    if (!document.body.contains(box)) return;
+    box.innerHTML = list.length ? list.map(q => questionItemHtml(q, answererNames)).join("") : `<p class="muted">Aún no hay preguntas de alumnos.</p>`;
+    box.querySelectorAll("[data-answer-q]").forEach(b => b.addEventListener("click", async () => {
+      const id = b.getAttribute("data-answer-q");
+      const ta = $("q-ans-" + id);
+      const errEl = $("q-ans-err-" + id);
+      const answer = ta ? ta.value.trim() : "";
+      if (errEl) showErr(errEl, "");
+      showErr($("q-teacher-err"), ""); showOk($("q-teacher-msg"), "");
+      if (!answer) { if (errEl) showErr(errEl, "Escribe tu respuesta antes de enviarla."); return; }
+      b.disabled = true;
+      try {
+        await db.collection("questions").doc(id).update({
+          answer,
+          status: "respondida",
+          answeredAt: firebase.firestore.FieldValue.serverTimestamp(),
+          answeredBy: me.uid
+        });
+        showOk($("q-teacher-msg"), "Respuesta enviada.");
+        await renderQuestionsBox();
+      } catch (e) {
+        if (errEl) showErr(errEl, "No se pudo enviar tu respuesta. Inténtalo de nuevo.");
+      } finally { b.disabled = false; }
+    }));
+  } catch (e) {
+    if (document.body.contains(box)) box.innerHTML = `<p class="err">No se pudieron cargar las preguntas. Inténtalo de nuevo.</p>`;
+  }
+}
+
+function paymentStatusChip(p) {
+  if (p.status === "confirmado") return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#e3f0d3;color:#4a7003">Pagado</span>`;
+  if (p.status === "rechazado") return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#fbe3e1;color:#d41c14">Rechazado</span>`;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#c9a227;color:#fff">En revisión</span>`;
+}
+function sortPaymentsForTeacher(list) {
+  return [...list].sort((a, b) => {
+    const pa = a.status === "pendiente" ? 0 : 1;
+    const pb = b.status === "pendiente" ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return tsMillis(b.createdAt) - tsMillis(a.createdAt);
+  });
+}
+// Un comprobante pendiente en la cola: alumno, curso, semanas, monto,
+// fecha del comprobante y enlace para verlo, con Confirmar y Rechazar.
+function paymentItemHtml(p, studentName, courseName) {
+  const weeks = (p.weeks || []).slice().sort((a, b) => a - b);
+  return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(studentName || p.studentName || "Alumno/a")}</strong> · ${esc(courseName)} ${paymentStatusChip(p)} <span class="muted">${fmtAvDate(p.createdAt)}</span><br>Semanas: ${weeks.length ? esc(weeks.join(", ")) : "—"} · Monto: $${esc(p.amount)} · Fecha de la transferencia: ${esc(p.receiptDate || "—")}${p.receiptPath ? ` <button type="button" class="small" data-receipt="${esc(p.receiptPath)}">Ver comprobante</button>` : ""}</div></div>`
+    + `<div style="margin-top:8px"><button class="small gold" data-confirm-payment="${esc(p.studentId)}|${esc(p.id)}">Confirmar pago</button> <button class="small ghost" data-reject-payment="${esc(p.studentId)}|${esc(p.id)}">Rechazar</button></div>`;
+}
+// Lista de solo lectura para la ficha del alumno (sin botones): las
+// semanas quedan "Pagado" en ambos portales cuando se confirman.
+function renderStudentPaymentsHtml(list) {
+  if (!list.length) return `<p class="muted">Aún no hay pagos registrados para este alumno.</p>`;
+  return list.map(p => {
+    const weeks = (p.weeks || []).slice().sort((a, b) => a - b);
+    return `<p><strong>Semanas ${weeks.length ? esc(weeks.join(", ")) : "—"}</strong> ${paymentStatusChip(p)} <span class="muted">${fmtAvDate(p.createdAt)}</span><br>Monto: $${esc(p.amount)} · Fecha de la transferencia: ${esc(p.receiptDate || "—")}${p.status === "rechazado" && p.rejectReason ? `<br>Motivo del rechazo: ${esc(p.rejectReason)}` : ""}${p.receiptPath ? `<br><button type="button" class="small" data-receipt="${esc(p.receiptPath)}">Ver comprobante</button>` : ""}</p>`;
+  }).join("");
+}
+// Pagos pendientes de los alumnos visibles: NO se usa collectionGroup;
+// se recorre a los alumnos ya cargados y se lee su subcolección payments.
+// Sin orderBy (se ordena en el cliente, como las preguntas y los avisos).
+async function fetchPendingPayments(students) {
+  const out = [];
+  await Promise.all((students || []).map(async (st) => {
+    try {
+      const snap = await db.collection("students").doc(st.id).collection("payments").where("status", "==", "pendiente").get();
+      snap.forEach(d => out.push({ id: d.id, studentId: st.id, studentName: st.name || "", courseId: st.courseId || "", ...d.data() }));
+    } catch (e) {}
+  }));
+  return sortPaymentsForTeacher(out);
+}
+async function renderPaymentsQueue() {
+  const box = $("payments-queue-box");
+  if (!box) return;
+  box.innerHTML = `<p class="muted">Cargando comprobantes…</p>`;
+  try {
+    const list = await fetchPendingPayments(paymentsQueueStudents);
+    if (!document.body.contains(box)) return;
+    box.innerHTML = list.length ? list.map(p => paymentItemHtml(p, p.studentName, (courses[p.courseId] && courses[p.courseId].name) || p.courseId || "—")).join("") : `<p class="muted">No hay comprobantes pendientes de revisión en este curso.</p>`;
+    box.querySelectorAll("[data-receipt]").forEach(a => a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try { const url = await storage.ref(a.getAttribute("data-receipt")).getDownloadURL(); window.open(url, "_blank"); }
+      catch (err) { showErr($("pay-queue-err"), "No se pudo abrir el comprobante."); }
+    }));
+    box.querySelectorAll("[data-confirm-payment]").forEach(b => b.addEventListener("click", async () => {
+      const parts = b.getAttribute("data-confirm-payment").split("|");
+      const studentId = parts[0], paymentId = parts[1];
+      b.disabled = true;
+      try {
+        await db.collection("students").doc(studentId).collection("payments").doc(paymentId).update({
+          status: "confirmado",
+          confirmedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          confirmedBy: me.uid
+        });
+        showOk($("pay-queue-msg"), "Pago confirmado. Las semanas quedan marcadas como pagadas para el alumno y para ti.");
+        await renderPaymentsQueue();
+      } catch (e) { showErr($("pay-queue-err"), "No se pudo confirmar el pago. Inténtalo de nuevo."); }
+      finally { b.disabled = false; }
+    }));
+    box.querySelectorAll("[data-reject-payment]").forEach(b => b.addEventListener("click", async () => {
+      const parts = b.getAttribute("data-reject-payment").split("|");
+      const studentId = parts[0], paymentId = parts[1];
+      const reason = prompt("Motivo del rechazo (el alumno lo verá en su portal):");
+      if (reason === null) return;
+      if (!reason.trim()) { showErr($("pay-queue-err"), "Escribe el motivo del rechazo."); return; }
+      b.disabled = true;
+      try {
+        await db.collection("students").doc(studentId).collection("payments").doc(paymentId).update({
+          status: "rechazado",
+          rejectReason: reason.trim()
+        });
+        showOk($("pay-queue-msg"), "Pago rechazado. El alumno verá el motivo en su portal.");
+        await renderPaymentsQueue();
+      } catch (e) { showErr($("pay-queue-err"), "No se pudo rechazar el pago. Inténtalo de nuevo."); }
+      finally { b.disabled = false; }
+    }));
+  } catch (e) {
+    if (document.body.contains(box)) box.innerHTML = `<p class="err">No se pudieron cargar los comprobantes. Inténtalo de nuevo.</p>`;
+  }
+}
+async function renderStudentPaymentsBox(box, studentId) {
+  box.innerHTML = `<p class="muted">Cargando pagos…</p>`;
+  try {
+    const snap = await db.collection("students").doc(studentId).collection("payments").get();
+    const arr = []; snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+    box.innerHTML = renderStudentPaymentsHtml(sortPaymentsForTeacher(arr));
+    box.querySelectorAll("[data-receipt]").forEach(a => a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try { const url = await storage.ref(a.getAttribute("data-receipt")).getDownloadURL(); window.open(url, "_blank"); }
+      catch (err) { showErr($("pay-ficha-err-" + studentId), "No se pudo abrir el comprobante."); }
+    }));
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudieron cargar los pagos.</p>`;
+  }
+}
+
 async function renderStudents() {
   // Anti-carrera: cada llamada toma un número de generación; si llega una
   // llamada más nueva mientras esta espera un await, esta se descarta y no
@@ -3199,6 +3986,7 @@ async function renderStudents() {
   if (selClass && !courseClasses.some(c => c.id === selClass)) selClass = "";
   students.forEach(st => { st._class = resolveStudentClass(st, myClasses); st._classLabel = st._class ? classScheduleText(st._class.days, st._class.startTime, st._class.endTime) : ""; });
   const shownStudents = selClass ? students.filter(st => st._class && st._class.id === selClass) : students;
+  paymentsQueueStudents = shownStudents;
   const classOptions = courseClasses.map(c => `<option value="${c.id}"${c.id === selClass ? " selected" : ""}>${esc(classScheduleText(c.days, c.startTime, c.endTime))}</option>`).join("");
   const selClassDoc = selClass ? courseClasses.find(c => c.id === selClass) : null;
   const selClassShort = selClassDoc ? classScheduleText(selClassDoc.days, selClassDoc.startTime, selClassDoc.endTime) : "";
@@ -3226,6 +4014,17 @@ async function renderStudents() {
     ? "Aún no tienes una clase registrada para " + (course.name || "este curso") + ". Regístrala para poder dar de alta alumnos en este curso."
     : classOwnerName + " aún no tiene una clase registrada para " + (course.name || "este curso") + ". Regístrale una para poder dar de alta alumnos en este curso.";
   s.innerHTML = `
+  <div class="card"><h2>Preguntas de alumnos</h2>
+    <p class="hint">Las preguntas que tus alumnos te hacen desde su portal. Responde las pendientes aquí mismo.</p>
+    <div id="questions-box"><p class="muted">Cargando preguntas…</p></div>
+    <div id="q-teacher-msg" class="okmsg"></div><div id="q-teacher-err" class="err"></div>
+  </div>
+  <div class="card"><h2>Comprobantes por revisar</h2>
+    <p class="hint">Los comprobantes que tus alumnos subieron desde su portal para este curso. Confirma solo los pagos que ya viste reflejados en tu estado de cuenta.</p>
+    <p class="muted">El comprobante por sí solo no confirma que el dinero llegó a la cuenta; confírmalo con tu estado de cuenta.</p>
+    <div id="payments-queue-box"><p class="muted">Cargando comprobantes…</p></div>
+    <div id="pay-queue-msg" class="okmsg"></div><div id="pay-queue-err" class="err"></div>
+  </div>
   <div class="card"><h2>${(isAdmin || isManager) ? "Alumnos" : "Mis alumnos"}</h2>
     <p class="hint">La generación la elige el maestro al dar de alta al alumno (año de graduación). La fecha de inicio y la duración del curso no la determinan.</p>
     ${!myClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noClassesMsg)}</p>${canManageClasses ? `<p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : ""}` : (selCourse && !courseClasses.length ? `<p style="background:#fdeecb;color:#7a5c00;border-radius:8px;padding:10px 12px;font-weight:600">${esc(noCourseClassMsg)}</p>${canManageClasses ? `<p><button id="btn-goto-classes" class="gold">Registrar una clase</button></p>` : ""}` : "")}
@@ -3254,6 +4053,7 @@ async function renderStudents() {
         <div><dt>Clase</dt><dd>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</dd></div>
         <div><dt>CURP</dt><dd>${esc(st.curp || "—")}</dd></div>
         <div><dt>Teléfono</dt><dd>${esc(st.phone || "—")}</dd></div>
+        <div><dt>Correo (Classroom)</dt><dd>${esc(st.email || "—")}</dd></div>
         <div><dt>Inicio</dt><dd>${esc(st.startDate || "—")}</dd></div>
         <div><dt>Generación</dt><dd>${st.generation ? esc(st.generation) : "—"}</dd></div>
         <div><dt>ID</dt><dd>${esc(st.studentId || "—")}</dd></div>
@@ -3266,16 +4066,21 @@ async function renderStudents() {
           ${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}
           <div id="docs-row-${st.id}" class="hidden"><div id="docs-box-${st.id}"></div></div>
         </div>
+        <div class="st-ficha-sec"><h4>Pagos</h4>
+          <button class="small ghost" data-payments="${st.id}">Ver pagos</button>
+          <div id="payments-row-${st.id}" class="hidden"><div id="payments-box-${st.id}"></div><div id="pay-ficha-err-${st.id}" class="err"></div></div>
+        </div>
         <div class="st-ficha-sec"><h4>Cuenta de acceso</h4>
           ${isAdmin ? `<p class="muted">Contraseña: ${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</p>` : ""}
           <div id="acct-row-${st.id}" class="${st.authUid ? "hidden" : ""}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></div>
+          <div id="unlink-row-${st.id}" class="${st.authUid ? "" : "hidden"}"><p>Cuenta vinculada: <strong>${st.accountEmail ? esc(st.accountEmail) : "sin correo guardado"}</strong></p><div style="margin-top:10px"><button class="small ghost" data-unlink-account="${st.id}" style="color:var(--err)">Desvincular cuenta</button></div><div id="unlink-msg-${st.id}" class="okmsg"></div><div id="unlink-err-${st.id}" class="err"></div><p class="muted">Al desvincular, el alumno dejará de ver este curso en su portal. Su cuenta seguirá existiendo y seguirá vinculada a sus otros cursos si los tiene.</p></div>
         </div>
         <div><button class="small ghost" data-ficha="${st.id}">Cerrar ficha</button></div>
       </div>
     </article>`; }).join("") || `<p class="muted">Aún no hay alumnos en este curso con este maestro.</p>`}
     </div>
   </div>
-  ${(isAdmin || isManager) ? `<div class="card"><h2>Constancias</h2>
+  ${(false && (isAdmin || isManager)) ? `<div class="card"><h2>Constancias</h2>
     <p class="hint">Busca un alumno por su ID y se jalan sus datos para la constancia. La matrícula la escribes a mano aquí mismo; no se guarda en el portal.</p>
     <div class="row">
       <div><label>ID del alumno</label><input id="const-id" placeholder="Ej. GEC-0001"></div>
@@ -3312,6 +4117,10 @@ async function renderStudents() {
       <div><label>CURP</label><input id="st-curp" value="${esc(editingSt ? (editingSt.curp || "") : "")}" placeholder="CURP del alumno"></div>
       <div><label>Teléfono</label><input id="st-phone" value="${esc(editingSt ? (editingSt.phone || "") : "")}" placeholder="Teléfono / WhatsApp"></div>
     </div>
+    <div class="row">
+      <div><label>Correo electrónico (Classroom)</label><input id="st-email" type="email" value="${esc(editingSt ? (editingSt.email || "") : "")}" placeholder="correo@ejemplo.com"></div>
+    </div>
+    <p class="hint">Correo del alumno en Google Classroom: sirve para vincular su ficha con sus tareas y calificaciones aunque su nombre en Classroom sea distinto al del portal; el nombre del portal se mantiene independiente. Si el alumno ya tiene cuenta en el portal, este correo no cambia su acceso (eso se hace en la ficha, en Cuenta de acceso).</p>
     <div class="row">
       <div><label>Fecha de inicio de clases</label><input id="st-start" type="date" value="${esc(editingSt ? (editingSt.startDate || "") : "")}"></div>
       <div><label>Generación (año de graduación)</label><input id="st-gen" type="number" value="${esc(editingSt ? (editingSt.generation || "") : "")}" placeholder="Ej. 2027"></div>
@@ -3369,6 +4178,8 @@ async function renderStudents() {
   // Constancias (solo admin y gestora: la tarjeta no se muestra a un
   // maestro normal): buscar un alumno por su ID y mostrar sus datos. La
   // matrícula se escribe a mano en el campo de la tarjeta y NO se guarda.
+  // OCULTA desde 2026-11-26 por decisión del usuario: la tarjeta no se
+  // renderiza (el `false &&` de arriba la apaga) hasta subir la plantilla.
   const btnConstSearch = $("btn-const-search");
   if (btnConstSearch) {
     const doConstSearch = async () => {
@@ -3426,6 +4237,7 @@ async function renderStudents() {
     $("st-name").value = st.name || "";
     $("st-curp").value = st.curp || "";
     $("st-phone").value = st.phone || "";
+    $("st-email").value = st.email || "";
     $("st-start").value = st.startDate || "";
     $("st-gen").value = st.generation || "";
     $("st-studentid").value = st.studentId || suggestedStudentId;
@@ -3438,6 +4250,17 @@ async function renderStudents() {
     if (row.classList.contains("hidden")) {
       row.classList.remove("hidden");
       await renderDocsBox(box, id, selTeacher);
+    } else row.classList.add("hidden");
+  }));
+  // Pagos del alumno en su ficha (solo lectura): semanas, monto, fecha,
+  // estado y motivo de rechazo; se cargan al abrir, como los documentos.
+  s.querySelectorAll("[data-payments]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-payments");
+    const row = $("payments-row-" + id);
+    const box = $("payments-box-" + id);
+    if (row.classList.contains("hidden")) {
+      row.classList.remove("hidden");
+      await renderStudentPaymentsBox(box, id);
     } else row.classList.add("hidden");
   }));
   s.querySelectorAll("[data-account]").forEach(b => b.addEventListener("click", () => {
@@ -3514,6 +4337,12 @@ async function renderStudents() {
     const email = $("link-email-" + id).value.trim();
     showErr($("link-err-" + id), ""); showOk($("link-msg-" + id), "");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showErr($("link-err-" + id), "Escribe un correo válido."); return; }
+    // Confirmación con los datos que se van a vincular (correo escrito,
+    // alumno y curso) antes de llamar al servidor.
+    const st = students.find(x => x.id === id);
+    const stName = st ? st.name : "este alumno";
+    const stCourse = (st && courses[st.courseId] && courses[st.courseId].name) || course.name || "";
+    if (!confirm("¿Vincular la cuenta " + email + " a " + stName + " (" + stCourse + ")?")) return;
     b.disabled = true;
     try {
       await loadFunctionsScript();
@@ -3528,6 +4357,34 @@ async function renderStudents() {
       setTimeout(renderStudents, 2500);
     } catch (e) {
       showErr($("link-err-" + id), "No se pudo vincular: " + (e.message || e.code || e));
+    } finally { b.disabled = false; }
+  }));
+  // Desvincular la cuenta de acceso desde la ficha del alumno (sección
+  // "Cuenta de acceso"): solo se borran de ESTE registro los 4 campos
+  // que escribe linkStudentAccount (authUid, accountEmail, linkedAt,
+  // linkedBy). La cuenta de Auth NO se borra y los demás registros
+  // vinculados a la misma cuenta no se tocan. Escritura directa: las
+  // reglas de /students/{id} ya permiten el update al admin, a la
+  // gestora o al maestro dueño de la ficha, sin restricción de campos
+  // (mismo permiso que el propio vínculo), así que no hace falta una
+  // callable nueva. Mismo patrón que "Quitar acceso" de la tarjeta.
+  s.querySelectorAll("[data-unlink-account]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-unlink-account");
+    const st = students.find(x => x.id === id);
+    const stName = st ? st.name : "este alumno";
+    const stCourse = (st && courses[st.courseId] && courses[st.courseId].name) || course.name || "";
+    const email = (st && st.accountEmail) || "";
+    showErr($("unlink-err-" + id), ""); showOk($("unlink-msg-" + id), "");
+    if (!confirm("¿Desvincular la cuenta " + (email || "de acceso") + " de " + stName + " (" + stCourse + ")? El alumno dejará de ver este curso en su portal. Su cuenta seguirá existiendo y seguirá vinculada a sus otros cursos si los tiene.")) return;
+    b.disabled = true;
+    try {
+      await db.collection("students").doc(id).update({ authUid: firebase.firestore.FieldValue.delete(), accountEmail: firebase.firestore.FieldValue.delete(), linkedAt: firebase.firestore.FieldValue.delete(), linkedBy: firebase.firestore.FieldValue.delete() });
+      showOk($("unlink-msg-" + id), "Cuenta desvinculada.");
+      // La tabla se vuelve a cargar con un poco de retraso para que el
+      // mensaje de éxito se alcance a leer (el recargado borra la fila).
+      setTimeout(renderStudents, 2500);
+    } catch (e) {
+      showErr($("unlink-err-" + id), "No se pudo desvincular: " + (e.message || e));
     } finally { b.disabled = false; }
   }));
   s.querySelectorAll("[data-unlink]").forEach(b => b.addEventListener("click", async () => {
@@ -3583,11 +4440,13 @@ async function renderStudents() {
     const name = $("st-name").value.trim();
     const curp = $("st-curp").value.trim();
     const phone = $("st-phone").value.trim();
+    const email = ($("st-email") ? $("st-email").value : "").trim().toLowerCase();
     const startDate = $("st-start").value;
     const generation = parseInt($("st-gen").value, 10);
     const studentId = normalizeStudentId($("st-studentid") ? $("st-studentid").value : "");
     showErr($("st-err"), ""); showOk($("st-msg"), "");
     if (!name) { showErr($("st-err"), "Escribe el nombre del alumno."); return; }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showErr($("st-err"), "Escribe un correo válido o déjalo vacío."); return; }
     if (!selCourse || !selTeacher) { showErr($("st-err"), "Elige curso y maestro primero."); return; }
     if (!generation) { showErr($("st-err"), "Escribe la generación del alumno (año de graduación, ej. 2027)."); return; }
     if (!studentId) { showErr($("st-err"), "Escribe el ID del alumno (ej. GEC-0001). El portal sugiere el siguiente disponible."); return; }
@@ -3611,7 +4470,7 @@ async function renderStudents() {
         showErr($("st-err"), "Ya existe otro alumno con el ID " + studentId + ". Usa el siguiente disponible o escribe otro.");
         return;
       }
-      const data = { name, curp, phone, studentId, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
+      const data = { name, curp, phone, email, studentId, courseId: selCourse, teacherId: selTeacher, startDate: startDate || "", generation, active: true, diplomas: diplomasMap };
       if (classDoc) {
         data.classId = classDoc.id;
         data.classLabel = classScheduleText(classDoc.days, classDoc.startTime, classDoc.endTime);
@@ -3634,6 +4493,7 @@ async function renderStudents() {
         const upd = { ...data };
         if (!upd.curp && saved.curp) upd.curp = saved.curp;
         if (!upd.phone && saved.phone) upd.phone = saved.phone;
+        if (!upd.email && saved.email) upd.email = saved.email;
         if (!upd.name && saved.name) upd.name = saved.name;
         if (!upd.startDate && saved.startDate) upd.startDate = saved.startDate;
         if (!upd.generation && saved.generation) upd.generation = saved.generation;
@@ -3656,6 +4516,10 @@ async function renderStudents() {
     } catch (e) { showErr($("st-err"), "No se pudo guardar: " + (e.message || e)); }
     finally { $("btn-save-student").disabled = false; }
   });
+  // Preguntas de alumnos: se cargan al inicio de la sección.
+  renderQuestionsBox();
+  // Comprobantes por revisar: se cargan al inicio de la sección.
+  renderPaymentsQueue();
 }
 
 // ---------- Documentos por alumno ----------
@@ -3666,8 +4530,8 @@ async function renderDocsBox(box, studentId, teacherId) {
     const docs = []; snap.forEach(d => docs.push({ id: d.id, ...d.data() }));
     box.innerHTML = `
       ${docs.map(d => `<div class="docline"><span>${esc(d.name)}</span><span class="muted">${d.size ? Math.round(d.size / 1024) + " KB" : ""}</span>
-        <a href="#" data-dl="${d.id}" data-path="${esc(d.path)}">Descargar</a>
-        <a href="#" data-del-doc="${d.id}" data-path="${esc(d.path)}" style="color:var(--err)">Eliminar</a></div>`).join("") || `<p class="muted">Sin documentos todavía. Sube el INE, CURP, acta o comprobantes en PDF.</p>`}
+        <button type="button" class="small ghost" data-dl="${d.id}" data-path="${esc(d.path)}">Descargar</button>
+        <button type="button" class="small ghost" data-del-doc="${d.id}" data-path="${esc(d.path)}" style="color:var(--err)">Eliminar</button></div>`).join("") || `<p class="muted">Sin documentos todavía. Sube el INE, CURP, acta o comprobantes en PDF.</p>`}
       <div style="margin-top:10px"><input type="file" id="up-${studentId}" accept="application/pdf" style="width:auto">
       <button class="small gold" id="btn-up-${studentId}">Subir PDF</button></div>
       <div id="up-msg-${studentId}" class="okmsg"></div><div id="up-err-${studentId}" class="err"></div>`;
