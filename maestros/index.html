@@ -350,25 +350,59 @@ auth.onAuthStateChanged((user) => {
   // normal de la página.
   if (authRestored) return;
   authRestored = true;
-  if (user) restoreSession(user);
+  if (user) {
+    // La sesión guardada se restaura sola al abrir el portal: si la
+    // última actividad fue hace más de 5 minutos, no se entra, se cierra
+    // la sesión y queda la pantalla de inicio de sesión (v9.2).
+    if (idleStale()) { closeIdleSession(); return; }
+    restoreSession(user);
+  }
   else showLoginForm();
 });
 
 // Cierre de sesión por inactividad: 5 minutos sin usar el portal.
+// El temporizador solo corre mientras la pestaña está abierta en pantalla:
+// si se cierra la pestaña o el navegador la congela (segundo plano,
+// teléfono dormido), el temporizador muere y la sesión guardada de
+// Firebase se restauraría sola al volver a abrir el portal. Por eso,
+// además del temporizador, cada actividad guarda su hora en el navegador
+// (v9.2) y al abrir el portal o volver a la pestaña se comprueba: si la
+// última actividad fue hace más de 5 minutos, la sesión se cierra.
 const IDLE_LIMIT_MS = 5 * 60 * 1000;
+const IDLE_STAMP_KEY = "gecatechLastActivity";
 let idleTimer = null;
 let idleArmed = false;
+function stampIdleActivity() {
+  try { localStorage.setItem(IDLE_STAMP_KEY, String(Date.now())); } catch (e) {}
+}
+function idleStale() {
+  try {
+    const v = Number(localStorage.getItem(IDLE_STAMP_KEY));
+    // Sin marca no se puede saber: se trata como reciente; enterApp()
+    // marca la actividad al entrar, así que a partir de ahí sí hay marca.
+    if (!v) return false;
+    return Date.now() - v > IDLE_LIMIT_MS;
+  } catch (e) { return false; }
+}
+async function closeIdleSession() {
+  idleArmed = false;
+  try { localStorage.removeItem(IDLE_STAMP_KEY); } catch (e) {}
+  try { await auth.signOut(); } catch (e) {}
+  location.reload();
+}
 function resetIdleTimer() {
   if (!idleArmed) return;
+  stampIdleActivity();
   if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(async () => {
-    idleArmed = false;
-    try { await auth.signOut(); } catch (e) {}
-    location.reload();
-  }, IDLE_LIMIT_MS);
+  idleTimer = setTimeout(closeIdleSession, IDLE_LIMIT_MS);
 }
 ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach(ev =>
   window.addEventListener(ev, resetIdleTimer, { passive: true }));
+// Al volver a la pestaña después de más de 5 min sin usar el portal,
+// la sesión se cierra aunque el temporizador no haya podido correr.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && idleArmed && idleStale()) closeIdleSession();
+});
 
 function enterApp() {
   idleArmed = true;
