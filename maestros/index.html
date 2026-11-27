@@ -1941,27 +1941,15 @@ function crRenderMaterials(courseId) {
   if (c.materials === null) { box.innerHTML = ""; return; }
   const list = c.materials || [];
   if (!list.length) { box.innerHTML = `<h3 style="font-size:15px;margin:12px 0 6px">Materiales</h3><p class="muted">No hay materiales publicados todavía.</p>`; return; }
-  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
-  // distintos con el mismo nombre normalizado forman un solo grupo, con
-  // el nombre del primer tema que llegó. Los sin tema van al final como
-  // "Material general". La normalización es la de normTopicName; el
-  // respaldo idéntico solo cubre la extracción aislada en pruebas.
-  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  // Grupo por MATERIA (módulo del temario): el número del título hace
+  // de respaldo cuando el material no trae tema en Classroom, así los
+  // 1.1/1.2/1.3/1.4 quedan juntos aunque unos traigan tema y otros no.
+  // Sin temario se agrupa como antes por nombre de tema normalizado.
   const topics = c.topics || [];
-  const groups = [];
-  const groupByKey = {};
-  const topicKeyById = {};
-  topics.forEach(t => {
-    const key = norm(t.name);
-    if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
-    if (t.topicId) topicKeyById[t.topicId] = key;
-  });
-  const general = [];
-  list.forEach(m => {
-    const key = (m.topicId && topicKeyById[m.topicId]) || "";
-    if (key && groupByKey[key]) groupByKey[key].items.push(m);
-    else general.push(m);
-  });
+  const syllabus = courseConfig(portalCourseIdOfClassroomId(courseId)).syllabus || [];
+  const grouped = groupMaterialsByModule(list, topics, syllabus);
+  const groups = grouped.groups;
+  const general = grouped.general;
   const matHtml = (m) => {
     const links = [];
     (m.materials || []).forEach(mt => {
@@ -1994,33 +1982,21 @@ function crRenderMyMaterials(courseId) {
   const items = [];
   (c.materials || []).forEach(m => items.push({ title: m.title || "Material", description: m.description || "", topicId: m.topicId || "", updateTime: m.updateTime || "", materials: m.materials || [] }));
   (c.works || []).forEach(w => {
-    if ((w.materials || []).length) items.push({ title: "Tarea: " + (w.title || "Tarea"), description: "", topicId: w.topicId || "", updateTime: w.creationTime || "", materials: w.materials || [] });
+    if ((w.materials || []).length) items.push({ title: "Tarea: " + (w.title || "Tarea"), classifyTitle: w.title || "", description: "", topicId: w.topicId || "", updateTime: w.creationTime || "", materials: w.materials || [] });
   });
   const courseLink = (classroomCourses.find(x => x.id === courseId) || {}).alternateLink || "";
   if (!items.length) {
     box.innerHTML = `<h3 style="font-size:15px;margin:12px 0 6px">Mis materiales</h3><p class="muted">No hay materiales ni archivos de tareas publicados todavía.</p>`;
     return;
   }
-  const byTopic = {};
-  const general = [];
-  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
-  // distintos con el mismo nombre normalizado forman un solo grupo, con
-  // el nombre del primer tema que llegó. La normalización es la de
-  // normTopicName; el respaldo idéntico solo cubre la extracción
-  // aislada en pruebas.
-  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  const groups = [];
-  const topicKeyById = {};
-  topics.forEach(t => {
-    const key = norm(t.name);
-    if (key && !byTopic[key]) { byTopic[key] = { name: t.name, items: [] }; groups.push(byTopic[key]); }
-    if (t.topicId) topicKeyById[t.topicId] = key;
-  });
-  items.forEach(m => {
-    const key = (m.topicId && topicKeyById[m.topicId]) || "";
-    if (key && byTopic[key]) byTopic[key].items.push(m);
-    else general.push(m);
-  });
+  // Grupo por MATERIA (mismo que crRenderMaterials): el número del
+  // título hace de respaldo cuando no hay tema; las tareas se
+  // clasifican por su título original (classifyTitle, sin el prefijo
+  // "Tarea: "). Sin temario se agrupa como antes por nombre de tema.
+  const syllabus = courseConfig(portalCourseIdOfClassroomId(courseId)).syllabus || [];
+  const grouped = groupMaterialsByModule(items, topics, syllabus);
+  const groups = grouped.groups;
+  const general = grouped.general;
   const matHtml = (m) => {
     const links = materialLinksOf(m);
     return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.updateTime ? `<div class="muted">${fmtAvDate(m.updateTime)}</div>` : ""}${m.description ? `<div class="mat-desc">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join("")}</div>` : ""}</article>`;
@@ -2160,11 +2136,19 @@ async function showCourseWork(courseId) {
     let topics = null;
     const tData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/topics?pageSize=50");
     if (tData) topics = tData.topics || [];
+    // Si la lectura de temas falla, classroomFetchSoft devuelve null
+    // en silencio y todo el material caía en "Material general" aunque
+    // trajera tema asignado en Classroom (27 nov 2026: el usuario SÍ
+    // asigna el tema a cada material; el desplegable "Tema" solo
+    // mostraba "Sin tema"). Se deja constancia en la consola para
+    // poder verlo en vivo; los materiales se agrupan por el número
+    // del título como respaldo.
+    if (!tData) console.warn("[portal] no se pudieron cargar los temas de Classroom del curso " + courseId + "; los materiales se agrupan por el número del título.");
     let announcements = null;
     const aData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/announcements?pageSize=20");
     if (aData) announcements = aData.announcements || [];
     let materials = null;
-    const mData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/courseWorkMaterials?pageSize=20");
+    const mData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/courseWorkMaterials?pageSize=50");
     if (mData) materials = mData.courseWorkMaterial || [];
     crCache[courseId] = { works, roster, teachers, portalByUid, subsByWork: {}, topics, announcements, materials, subsReady: null, nwMaterials: [] };
     const topicOptions = (topics || []).map(t => `<option value="${esc(t.topicId)}">${esc(t.name)}</option>`).join("");
@@ -2727,7 +2711,14 @@ function classifyMaterialModule(m, topics, syllabus) {
   const title = (m && m.title) || "";
   if (isTemarioTitle(title)) return { kind: "temario" };
   const modules = (Array.isArray(syllabus) ? syllabus : []).map(x => (x && x.title) || "");
-  const topic = (topics || []).find(t => t && t.topicId === (m && m.topicId));
+  // El topicId llega como texto o como número según la respuesta de
+  // Google: se compara como texto en ambos lados. Con === estricto un
+  // topicId numérico (887614981873) no empata con su texto
+  // ("887614981873") y el material caía en general aunque trajera el
+  // tema asignado en Classroom (27 nov 2026: el usuario SÍ asigna el
+  // tema a cada material). Sin topicId no se busca (no casa con nada).
+  const tid = (m && m.topicId) ? String(m.topicId) : "";
+  const topic = tid ? (topics || []).find(t => t && t.topicId && String(t.topicId) === tid) : undefined;
   const topicName = topic ? (topic.name || "") : "";
   const byTopic = moduleIdxForTopicName(topicName, modules);
   if (byTopic !== null) return { kind: "module", idx: byTopic };
@@ -2747,6 +2738,108 @@ function classifyMaterialModule(m, topics, syllabus) {
     }
   }
   return { kind: "general" };
+}
+// Id del curso del portal (courses/{id}) para un curso de Classroom,
+// buscado por su classroomUrl; "" si ningún curso del portal lo enlaza.
+function portalCourseIdOfClassroomId(classroomId) {
+  const found = Object.entries(courses || {}).find(([, cc]) => {
+    const m = /classroom\.google\.com\/c\/([A-Za-z0-9_-]+)/.exec((cc && cc.classroomUrl) || "");
+    return m && m[1] === classroomId;
+  });
+  return found ? found[0] : "";
+}
+// Nombre a mostrar de una materia del temario: se quita el prefijo
+// numérico ("1.0 ", "3.0 ") y se pone en tipo título, con las
+// preposiciones en minúscula ("Tópicos de Manufactura",
+// "Metodología Lean Manufacturing–Six Sigma"). Espejo de
+// materialDisplayModuleName del servidor: sin tema de Classroom que
+// case con la materia, el encabezado es este nombre limpio, no el
+// título crudo del temario ("1.0 TÓPICOS DE MANUFACTURA").
+function displayModuleName(title) {
+  const t = String(title || "").replace(/^\s*\d+(?:\.\d+)?\s*[-–—.]?\s*/, "").toLowerCase();
+  const small = new Set(["de", "la", "el", "los", "las", "en", "y", "a", "del", "con", "por", "para", "e", "o"]);
+  return t.replace(/(^|[\s–—\-/])([a-záéíóúñ]+)/g, (match, sep, word, offset) => {
+    if (offset > 0 && small.has(word)) return sep + word;
+    return sep + word.charAt(0).toUpperCase() + word.slice(1);
+  });
+}
+// Agrupa materiales por MATERIA (módulo del temario), no por nombre de
+// tema de Classroom: un material sin tema pero con número en el título
+// ("1.2 ...") cae en la misma materia que uno con el tema asignado
+// (clasificación: tema primero, número como respaldo — la misma que
+// classifyMaterialModule y que el servidor). Sin temario se agrupa
+// como antes por nombre de tema normalizado. Devuelve { groups,
+// general }: los grupos van en orden de materia (no de llegada) y
+// "Material general" se devuelve aparte para pintarlo al final. El
+// encabezado de cada grupo es el nombre del tema de Classroom que casa
+// con esa materia, o el título de la materia si ningún tema casa con
+// ella. Para clasificar, cada material puede traer classifyTitle (su
+// título original sin prefijos como "Tarea: "); si no, se usa title.
+function groupMaterialsByModule(items, topics, syllabus) {
+  const modules = (Array.isArray(syllabus) ? syllabus : []).map(x => (x && x.title) || "");
+  const hasSyllabus = modules.some(t => t);
+  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const groups = [];
+  const groupByKey = {};
+  const general = [];
+  const topicKeyById = {};
+  const topicNameById = {};
+  (topics || []).forEach(t => {
+    if (!t || !t.topicId) return;
+    topicKeyById[t.topicId] = norm(t.name);
+    topicNameById[t.topicId] = t.name || "";
+  });
+  const topicNameByModule = {};
+  if (hasSyllabus) {
+    (topics || []).forEach(t => {
+      const idx = moduleIdxForTopicName(t && t.name, modules);
+      if (idx !== null && topicNameByModule[idx] == null) topicNameByModule[idx] = (t && t.name) || "";
+    });
+    // Sin temario no hay materias: los grupos se crean en el orden de
+    // los temas, como antes.
+  } else {
+    (topics || []).forEach(t => {
+      const key = norm(t && t.name);
+      if (key && !groupByKey["t:" + key]) { groupByKey["t:" + key] = { name: t.name, items: [], ord: groups.length }; groups.push(groupByKey["t:" + key]); }
+    });
+  }
+  // Agrupado anterior por nombre de tema (sin temario, o para el
+  // documento Temario cuando su tema no casa con ninguna materia).
+  // Sin temario los grupos ya se precrearon en orden de temas; con
+  // temario se crean al aparecer, después de los grupos por materia.
+  const pushLegacy = (m) => {
+    const key = (m && m.topicId && topicKeyById[m.topicId]) || "";
+    if (!key) return false;
+    if (!groupByKey["t:" + key]) { groupByKey["t:" + key] = { name: topicNameById[m.topicId] || key, items: [], ord: 1000000 }; groups.push(groupByKey["t:" + key]); }
+    groupByKey["t:" + key].items.push(m);
+    return true;
+  };
+  (items || []).forEach(m => {
+    if (!m) return;
+    const titleForClassify = m.classifyTitle || m.title || "";
+    if (!hasSyllabus) { if (!pushLegacy(m)) general.push(m); return; }
+    const c = classifyMaterialModule({ title: titleForClassify, topicId: m.topicId || "" }, topics, syllabus);
+    if (c.kind === "temario") {
+      // El documento Temario se queda con su tema como antes: si el
+      // tema casa con una materia, va en ese grupo; si no, como antes.
+      const topicName = (m.topicId && topicNameById[m.topicId]) || "";
+      const midx = topicName ? moduleIdxForTopicName(topicName, modules) : null;
+      if (midx !== null) {
+        const key = "m:" + norm(modules[midx]);
+        if (key !== "m:" && !groupByKey[key]) { groupByKey[key] = { name: topicNameByModule[midx] || displayModuleName(modules[midx]), items: [], ord: midx }; groups.push(groupByKey[key]); }
+        if (key !== "m:") { groupByKey[key].items.push(m); return; }
+      }
+      if (!pushLegacy(m)) general.push(m);
+      return;
+    }
+    if (c.kind === "general") { general.push(m); return; }
+    const key = "m:" + norm(modules[c.idx]);
+    if (key === "m:") { general.push(m); return; }
+    if (!groupByKey[key]) { groupByKey[key] = { name: topicNameByModule[c.idx] || displayModuleName(modules[c.idx]), items: [], ord: c.idx }; groups.push(groupByKey[key]); }
+    groupByKey[key].items.push(m);
+  });
+  groups.sort((a, b) => a.ord - b.ord);
+  return { groups, general };
 }
 // Filtro de material para un alumno: { syllabus, entryModuleIdx,
 // currentModuleIdx, entryModuleTitle, currentModuleTitle } o null si no
@@ -4077,26 +4170,41 @@ function renderMaterialsHtml(data, filter) {
     });
     if (!list.length) return `<p class="muted">Aún no hay material publicado para las materias que ve este alumno.</p>`;
   }
-  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
-  // distintos con el mismo nombre normalizado forman un solo grupo, con
-  // el nombre del primer tema que llegó. La normalización es la de
-  // normTopicName; el respaldo idéntico solo cubre la extracción
-  // aislada en pruebas (test-portal-news-guide extrae este render solo).
-  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  const groups = [];
-  const groupByKey = {};
-  const topicKeyById = {};
-  topics.forEach(t => {
-    const key = norm(t.name);
-    if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
-    if (t.topicId) topicKeyById[t.topicId] = key;
-  });
-  const general = [];
-  list.forEach(m => {
-    const key = (m.topicId && topicKeyById[m.topicId]) || "";
-    if (key && groupByKey[key]) groupByKey[key].items.push(m);
-    else general.push(m);
-  });
+  // Grupo por MATERIA, no por nombre de tema: (1) si el servidor ya
+  // trae el grupo de cada material (group/groupName de
+  // getStudentCourseMaterials), se usa tal cual; (2) si no, y hay
+  // filtro con temario, se clasifica aquí por módulo (tema primero,
+  // número del título como respaldo); (3) sin temario se agrupa como
+  // antes por nombre de tema normalizado.
+  let groups = [];
+  let general = [];
+  if (list.some(m => m && m.group)) {
+    const byKey = {};
+    list.forEach(m => {
+      if (m.group) {
+        if (!byKey[m.group]) { byKey[m.group] = { name: m.groupName || m.group, items: [] }; groups.push(byKey[m.group]); }
+        byKey[m.group].items.push(m);
+      } else general.push(m);
+    });
+  } else if (filter && Array.isArray(filter.syllabus)) {
+    const grouped = groupMaterialsByModule(list, topics, filter.syllabus);
+    groups = grouped.groups;
+    general = grouped.general;
+  } else {
+    const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const groupByKey = {};
+    const topicKeyById = {};
+    topics.forEach(t => {
+      const key = norm(t.name);
+      if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
+      if (t.topicId) topicKeyById[t.topicId] = key;
+    });
+    list.forEach(m => {
+      const key = (m.topicId && topicKeyById[m.topicId]) || "";
+      if (key && groupByKey[key]) groupByKey[key].items.push(m);
+      else general.push(m);
+    });
+  }
   const matHtml = (m) => {
     const links = materialLinksOf(m);
     return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.updateTime ? `<div class="muted">${fmtAvDate(m.updateTime)}</div>` : ""}${m.description ? `<div class="mat-desc">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join("")}</div>` : ""}</article>`;

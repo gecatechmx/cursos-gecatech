@@ -750,26 +750,40 @@ function renderMaterialsHtml(data) {
   // nunca se le muestra al alumno.
   const list = materials.filter(m => !isTemarioTitle(m && m.title));
   if (!list.length) return `<p class="muted">Todavía no hay material de tu materia en el portal. Cuando tu maestro publique material de la materia que estás tomando, aparecerá aquí.</p>`;
-  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
-  // distintos con el mismo nombre normalizado forman un solo grupo, con
-  // el nombre del primer tema que llegó. Normalizador local, espejo
-  // exacto del normTopicName del portal de maestros (recortar,
+  // Grupo por MATERIA: el servidor ya trae el grupo de cada material
+  // (group/groupName de getStudentCourseMaterials), así un material sin
+  // tema ("1.2 ...") cae en la misma materia que uno con el tema
+  // asignado. Si la respuesta guardada es de antes del cambio (sin
+  // grupo), se agrupa como antes por nombre de tema normalizado: dos
+  // temas distintos con el mismo nombre normalizado forman un solo
+  // grupo, con el nombre del primer tema que llegó. Normalizador local,
+  // espejo exacto del normTopicName del portal de maestros (recortar,
   // minúsculas, colapsar espacios, quitar acentos).
   const normTopicName = (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
   const groups = [];
-  const groupByKey = {};
-  const topicKeyById = {};
-  topics.forEach(t => {
-    const key = normTopicName(t.name);
-    if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
-    if (t.topicId) topicKeyById[t.topicId] = key;
-  });
   const general = [];
-  list.forEach(m => {
-    const key = (m.topicId && topicKeyById[m.topicId]) || "";
-    if (key && groupByKey[key]) groupByKey[key].items.push(m);
-    else general.push(m);
-  });
+  if (list.some(m => m && m.group)) {
+    const byKey = {};
+    list.forEach(m => {
+      if (m.group) {
+        if (!byKey[m.group]) { byKey[m.group] = { name: m.groupName || m.group, items: [] }; groups.push(byKey[m.group]); }
+        byKey[m.group].items.push(m);
+      } else general.push(m);
+    });
+  } else {
+    const groupByKey = {};
+    const topicKeyById = {};
+    topics.forEach(t => {
+      const key = normTopicName(t.name);
+      if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
+      if (t.topicId) topicKeyById[t.topicId] = key;
+    });
+    list.forEach(m => {
+      const key = (m.topicId && topicKeyById[m.topicId]) || "";
+      if (key && groupByKey[key]) groupByKey[key].items.push(m);
+      else general.push(m);
+    });
+  }
   const matHtml = (m) => {
     const links = materialLinksOf(m);
     return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.updateTime ? `<div class="muted">${fmtAvDate(m.updateTime)}</div>` : ""}${m.description ? `<div class="mat-desc">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join("")}</div>` : ""}</article>`;
