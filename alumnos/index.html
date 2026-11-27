@@ -53,6 +53,15 @@
   .login-box a { color:var(--navy); }
   .docline { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .docline a { color:var(--navy); }
+  /* Fichita de material de Classroom (Ver material): tarjeta con borde,
+     título destacado y enlaces como botones. El overflow-wrap evita que
+     una URL larga sin espacios ensanche la tarjeta en el celular. */
+  .mat-card { border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin:10px 0; background:#fff; max-width:100%; overflow-wrap:anywhere; word-break:break-word; }
+  .mat-card .mat-title { font-family:"Nunito","Segoe UI",system-ui,sans-serif; font-size:16px; font-weight:700; color:var(--navy); overflow-wrap:anywhere; word-break:break-word; }
+  .mat-card .mat-desc { margin-top:6px; font-size:14px; overflow-wrap:anywhere; word-break:break-word; }
+  .mat-card .mat-links { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .mat-card .mat-links a { display:inline-block; border:1px solid var(--navy); color:var(--navy); border-radius:999px; padding:5px 12px; font-size:13px; font-weight:600; text-decoration:none; background:#fff; overflow-wrap:anywhere; word-break:break-word; max-width:100%; }
+  .mat-card .mat-links a:hover { background:#eaf2f9; }
   .hidden { display:none !important; }
   .ic { width:20px; height:20px; flex:none; vertical-align:-4px; margin-right:7px; color:var(--navy2); }
   /* ---------- Mi próxima clase ---------- */
@@ -707,11 +716,14 @@ async function enterApp() {
 // El material se pide al servidor con la función getStudentCourseMaterials:
 // el navegador nunca habla directo con classroom.googleapis.com y nunca
 // recibe calificaciones ni entregas, solo temas y materiales. El material
-// se filtra por materia de entrada (ver materialFilterFor): cada alumno ve
-// solo desde la materia en la que entró, hacia adelante; lo anterior queda
-// oculto y lo nuevo aparece conforme se publica. Las presentaciones que el
-// maestro publica en Classroom como material (Drive, enlace o video) llegan
-// aquí igual que cualquier material: no hay que subirlas en el portal.
+// llega ya filtrado por materia de entrada desde el servidor: cada alumno
+// ve solo desde la materia en la que entró, hacia adelante; lo anterior
+// queda oculto y lo nuevo aparece conforme se publica. El portal del
+// alumno no lee el temario ni la semana del curso (viven en
+// courses/{id}/private/config, sin acceso para el alumno). Las
+// presentaciones que el maestro publica en Classroom como material (Drive,
+// enlace o video) llegan aquí igual que cualquier material: no hay que
+// subirlas en el portal.
 // El botón queda siempre visible para reintentar tras un error.
 function materialLinksOf(m) {
   const out = [];
@@ -729,36 +741,43 @@ function materialLinksOf(m) {
   });
   return out.filter(l => l.url);
 }
-function renderMaterialsHtml(data, filter) {
+function renderMaterialsHtml(data) {
   const topics = Array.isArray(data.topics) ? data.topics : [];
   const materials = Array.isArray(data.materials) ? data.materials : [];
   if (!materials.length) return `<p class="muted">Tu maestro aún no ha publicado material en Classroom.</p>`;
-  let list = materials;
-  if (filter) {
-    list = materials.filter(m => {
-      const c = classifyMaterialModule(m, topics, filter.syllabus);
-      if (c.kind === "temario") return false;
-      if (c.kind === "general") return true;
-      return c.idx >= filter.entryModuleIdx && c.idx <= filter.currentModuleIdx;
-    });
-    if (!list.length) return `<p class="muted">Todavía no hay material de tu materia en el portal. Cuando tu maestro publique material de la materia que estás tomando, aparecerá aquí.</p>`;
-  }
-  const byTopic = {};
+  // El material ya viene filtrado por materia desde el servidor (ver
+  // arriba). Aquí solo se oculta el documento del temario completo, que
+  // nunca se le muestra al alumno.
+  const list = materials.filter(m => !isTemarioTitle(m && m.title));
+  if (!list.length) return `<p class="muted">Todavía no hay material de tu materia en el portal. Cuando tu maestro publique material de la materia que estás tomando, aparecerá aquí.</p>`;
+  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
+  // distintos con el mismo nombre normalizado forman un solo grupo, con
+  // el nombre del primer tema que llegó. Normalizador local, espejo
+  // exacto del normTopicName del portal de maestros (recortar,
+  // minúsculas, colapsar espacios, quitar acentos).
+  const normTopicName = (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const groups = [];
+  const groupByKey = {};
+  const topicKeyById = {};
+  topics.forEach(t => {
+    const key = normTopicName(t.name);
+    if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
+    if (t.topicId) topicKeyById[t.topicId] = key;
+  });
   const general = [];
   list.forEach(m => {
-    const tid = m.topicId || "";
-    if (tid && topics.some(t => t.topicId === tid)) (byTopic[tid] = byTopic[tid] || []).push(m);
+    const key = (m.topicId && topicKeyById[m.topicId]) || "";
+    if (key && groupByKey[key]) groupByKey[key].items.push(m);
     else general.push(m);
   });
   const matHtml = (m) => {
     const links = materialLinksOf(m);
-    return `<p><strong>${esc(m.title || "Material")}</strong>${m.updateTime ? ` <span class="muted">${fmtAvDate(m.updateTime)}</span>` : ""}${m.description ? `<br>${esc(m.description)}` : ""}${links.length ? `<br>` + links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join(" · ") : ""}</p>`;
+    return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.updateTime ? `<div class="muted">${fmtAvDate(m.updateTime)}</div>` : ""}${m.description ? `<div class="mat-desc">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join("")}</div>` : ""}</article>`;
   };
   let html = "";
-  topics.forEach(t => {
-    const list = byTopic[t.topicId] || [];
-    if (!list.length) return;
-    html += `<h3 style="font-size:15px">${esc(t.name)}</h3>` + list.map(matHtml).join("");
+  groups.forEach(g => {
+    if (!g.items.length) return;
+    html += `<h3 style="font-size:15px">${esc(g.name)}</h3>` + g.items.map(matHtml).join("");
   });
   if (general.length) html += `<h3 style="font-size:15px">Material general</h3>` + general.map(matHtml).join("");
   return html;
@@ -770,8 +789,7 @@ function renderMaterialsResult(st, d) {
     box.innerHTML = `<p class="muted">${d.reason === "no-classroom" ? "Este curso aún no tiene Classroom enlazado. Pídele a tu maestro que lo enlace." : "Tu maestro aún no conectó su Classroom."}</p>`;
     return;
   }
-  const filter = materialFilterFor(st.courseId, coursesById[st.courseId] || {}, st);
-  box.innerHTML = (filter && filter.entryModuleIdx > 0 ? `<p class="muted">Material desde la materia ${esc(filter.entryModuleTitle)} en adelante.</p>` : "") + renderMaterialsHtml(d, filter);
+  box.innerHTML = renderMaterialsHtml(d);
 }
 function renderMaterialsError(st, code) {
   const box = $("mat-box-" + st.id);
@@ -1186,20 +1204,23 @@ function setupPaymentInfoBlock(st) {
 
 // ---------- Mis pagos ----------
 // El alumno paga por transferencia bancaria y sube la foto del
-// comprobante. Escribe directo en la subcolección `payments` de su ficha
-// (sin pasar por el servidor) y su maestro lo confirma o lo rechaza
-// directo desde su portal.
+// comprobante. El comprobante se sube a Storage y el pago lo registra el
+// servidor con la función createStudentPayment (que valida monto,
+// semanas, fecha y comprobante y escribe en la subcolección `payments`
+// de su ficha); el portal ya no escribe directo en la subcolección. Su
+// maestro lo confirma o lo rechaza directo desde su portal.
 //
 // REGLAS DE PRECIOS Y SEMANAS (diseño aprobado 2026-11-26):
 //  - Fecha de la semana N: startDate del CURSO (courses/{id}.startDate)
 //    + (N-1)*7 días (una clase por semana).
 //  - Precio según la FECHA DE LA CLASE, no la fecha de pago: $90 si la
 //    clase cae en 2026, $100 si cae desde el 1 de enero de 2027.
-//  - Tope de semanas: el calendario del curso derivado del temario, la
-//    misma derivación del portal de maestros (buildWeekCalendar con
-//    WEEK_PLAN: Industrial 53 semanas, Administrativo 54; otros cursos,
-//    1 tema = 1 semana). Si el curso no tiene temario, no hay tope de
-//    calendario: solo manda la fecha (hasta hoy).
+//  - Tope de semanas: el portal del alumno ya no deriva el calendario
+//    del curso (el temario vive en courses/{id}/private/config, sin
+//    acceso para el alumno): las semanas pagables son las que tienen
+//    fecha de clase hasta hoy, sin tope de calendario en el portal. El
+//    servidor (createStudentPayment) valida que cada semana elegida sí
+//    se pueda pagar y rechaza las que no.
 //  - Semanas pagables: las que tienen fecha de clase hasta hoy, desde la
 //    semana de ingreso del alumno (la primera cuya fecha cae en o después
 //    de su startDate), excluyendo las ya pagadas o en revisión. Se derivan
@@ -1210,208 +1231,18 @@ function setupPaymentInfoBlock(st) {
 //    cuenta: eso lo confirma el maestro con su estado de cuenta (el portal
 //    lo dice en el formulario y en la cola del maestro).
 const MAX_RECEIPT_MB = 5;
-// Calendario de semanas del curso: misma derivación que el portal de
-// maestros (ver WEEK_PLAN y buildWeekCalendar ahí).
-const WEEK_PLAN = {
-  industrial: [4, 5, 5, 4, 5, 4, 5, 4, 5, 4, 4, 4],
-  administrativo: [3, 3, 6, 6, 5, 5, 4, 5, 4, 5, 4, 4],
-};
-function flattenSyllabus(syllabus) {
-  const out = [];
-  (Array.isArray(syllabus) ? syllabus : []).forEach(m => {
-    (Array.isArray(m.topics) ? m.topics : []).forEach(t => out.push({ index: out.length, module: m.title || "", topic: t }));
-  });
-  return out;
-}
-function weeksOfModule(items, weekCount) {
-  const w = Math.max(1, weekCount | 0);
-  const base = Math.floor(items.length / w), rem = items.length % w;
-  const out = [];
-  let p = 0;
-  for (let i = 0; i < w; i++) {
-    const take = base + (i < rem ? 1 : 0);
-    out.push(items.slice(p, p + take));
-    p += take;
-  }
-  return out;
-}
-function buildWeekCalendar(courseId, syllabus) {
-  const plan = WEEK_PLAN[courseId] || null;
-  const flat = flattenSyllabus(syllabus || []);
-  const modules = [];
-  flat.forEach(it => {
-    const last = modules[modules.length - 1];
-    if (last && last.title === it.module) last.items.push(it);
-    else modules.push({ title: it.module, items: [it] });
-  });
-  const weeks = [];
-  modules.forEach((m, mi) => {
-    const w = (plan && plan[mi]) ? plan[mi] : Math.max(1, m.items.length);
-    weeksOfModule(m.items, w).forEach(items => {
-      weeks.push({ week: weeks.length + 1, module: m.title, topicIdxs: items.map(t => t.index), topics: items.map(t => t.topic) });
-    });
-  });
-  return weeks;
-}
-// Semana (índice 0-based) a la que pertenece un índice global de tema.
-function topicIndexToWeekIdx(calendar, topicIdx) {
-  if (!calendar.length || typeof topicIdx !== "number") return null;
-  for (let i = 0; i < calendar.length; i++) if (calendar[i].topicIdxs.includes(topicIdx)) return i;
-  // El tema ya no existe (temario editado): la semana del tema anterior más cercano.
-  for (let t = topicIdx - 1; t >= 0; t--) {
-    for (let i = 0; i < calendar.length; i++) if (calendar[i].topicIdxs.includes(t)) return i;
-  }
-  return 0;
-}
-// Normaliza un valor guardado de currentClass a índice 0-based de semana.
-function storedToWeekIdx(calendar, stored) {
-  if (!calendar.length) return null;
-  if (stored && typeof stored === "object" && typeof stored.week === "number") {
-    if (stored.week < 0) return 0;
-    if (stored.week >= calendar.length) return calendar.length - 1;
-    return stored.week;
-  }
-  if (typeof stored === "number") return topicIndexToWeekIdx(calendar, stored);
-  return null;
-}
-// ---------- Filtro de material por materia de entrada ----------
-// Cada alumno ve el material solo desde la materia en la que entró,
-// hacia adelante: visible = módulos con índice >= módulo de entrada
-// del alumno y <= módulo actual del curso. Lo anterior a su entrada
-// queda oculto; lo nuevo aparece conforme se publica. El módulo de
-// entrada se deriva de la semana de entrada del alumno (su fecha de
-// inicio contra el inicio del curso); el módulo actual, de la semana
-// actual del curso (courses/{id}.currentClass, que se elige a mano con
-// el selector de materia o el de semana: ambos escriben lo mismo).
-// La semana del curso NUNCA se le muestra al alumno: solo el nombre
-// de la materia. Sin temario o sin fecha de ingreso definible no se
-// filtra nada: se muestra todo como antes.
-function normTopicName(s) {
-  return String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-}
-function moduleTitlesOf(calendar) {
-  const out = [];
-  (Array.isArray(calendar) ? calendar : []).forEach(wk => { const t = (wk && wk.module) || ""; if (t && !out.includes(t)) out.push(t); });
-  return out;
-}
-function moduleIndexOfWeek(calendar, weekIdx0) {
-  if (!Array.isArray(calendar) || !calendar.length || weekIdx0 == null || weekIdx0 < 0) return null;
-  const wk = calendar[Math.min(weekIdx0, calendar.length - 1)];
-  if (!wk) return null;
-  return moduleTitlesOf(calendar).indexOf(wk.module || "");
-}
-function firstWeekIdxOfModule(calendar, moduleIdx) {
-  const titles = moduleTitlesOf(calendar);
-  const title = titles[moduleIdx];
-  if (title == null) return null;
-  for (let i = 0; i < (Array.isArray(calendar) ? calendar : []).length; i++) if (((calendar[i] || {}).module || "") === title) return i;
-  return null;
-}
-// "YYYY-MM-DD" -> ms de medianoche local, o null.
-function ymdMillis(s) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? "" : s).trim());
-  if (!m) return null;
-  const d = new Date(+m[1], +m[2] - 1, +m[3]);
-  return isNaN(d) ? null : d.getTime();
-}
-// Primera semana (1-based) cuya fecha de clase cae en o después del
-// ingreso del alumno. Sin fecha de ingreso o sin inicio del curso no se
-// puede derivar: null (entonces no se filtra). Misma cuenta que las
-// semanas pagables: inicio del curso + pasos de 7 días.
-function entryWeek1Based(courseStart, studentStart) {
-  const cs = String(courseStart || "").slice(0, 10);
-  const ss = String(studentStart || "").slice(0, 10);
-  const csMs = ymdMillis(cs);
-  if (csMs == null || !/^\d{4}-\d{2}-\d{2}$/.test(ss)) return null;
-  if (ss <= cs) return 1;
-  const ssMs = ymdMillis(ss);
-  if (ssMs == null) return null;
-  return 1 + Math.ceil((ssMs - csMs) / (7 * 24 * 60 * 60 * 1000));
-}
-// Prefijo numérico del título: "3.1 — ..." -> "3.1"; null si no lo tiene.
-function topicNumberOf(title) {
-  const m = /^\s*(\d+)\.(\d+)\b/.exec(String(title || ""));
-  return m ? (m[1] + "." + m[2]) : null;
-}
+// ---------- Material de clase: sin temario ni semana en el portal ----------
+// El alumno NUNCA lee el temario (syllabus) ni la semana actual del curso:
+// ambos viven en courses/{id}/private/config, un documento al que el
+// alumno no tiene acceso, y el portal del alumno solo lee los campos
+// públicos del curso (nombre, horario, enlace de Classroom). El filtrado
+// del material por materia (desde la materia en la que entró el alumno,
+// hacia adelante) lo hace el servidor en getStudentCourseMaterials.
+// Aquí solo queda el filtro del documento del temario completo, que
+// nunca se le muestra al alumno (se reconoce solo por su título).
 // ¿El título es el documento del temario completo? Se oculta del alumno.
 function isTemarioTitle(title) {
   return /^\s*temario\b/i.test(String(title || ""));
-}
-// Índice del módulo al que pertenece un nombre de tema de Classroom
-// (normalizado): exacto, uno contiene al otro, o todas sus palabras
-// están en el módulo. null si no casa con ningún módulo.
-function moduleIdxForTopicName(topicName, moduleTitles) {
-  const nt = normTopicName(topicName);
-  if (!nt) return null;
-  const norms = (moduleTitles || []).map(normTopicName);
-  let i = norms.indexOf(nt);
-  if (i >= 0) return i;
-  for (let k = 0; k < norms.length; k++) {
-    if (norms[k] && (norms[k].includes(nt) || nt.includes(norms[k]))) return k;
-  }
-  const words = nt.split(" ").filter(w => w.length > 2);
-  if (words.length) {
-    for (let k = 0; k < norms.length; k++) {
-      if (words.every(w => norms[k].includes(w))) return k;
-    }
-  }
-  return null;
-}
-// Clasifica un material de Classroom a un módulo del temario:
-// { kind: "module", idx } | { kind: "general" } | { kind: "temario" }.
-// PRIMERO por el nombre del tema de Classroom; SEGUNDO por el prefijo
-// numérico del título combinado con el tema (el número solo no basta:
-// en Administrativo el 1.1 se repite entre módulos). Sin tema que case
-// y sin número: "Material general", que sigue visible (Reglamento,
-// Introducción a plataformas.), salvo el documento "Temario", que se oculta.
-function classifyMaterialModule(m, topics, syllabus) {
-  const title = (m && m.title) || "";
-  if (isTemarioTitle(title)) return { kind: "temario" };
-  const modules = (Array.isArray(syllabus) ? syllabus : []).map(x => (x && x.title) || "");
-  const topic = (topics || []).find(t => t && t.topicId === (m && m.topicId));
-  const topicName = topic ? (topic.name || "") : "";
-  const byTopic = moduleIdxForTopicName(topicName, modules);
-  if (byTopic !== null) return { kind: "module", idx: byTopic };
-  const num = topicNumberOf(title);
-  if (num) {
-    const cands = [];
-    (Array.isArray(syllabus) ? syllabus : []).forEach((mod, mi) => {
-      (Array.isArray(mod.topics) ? mod.topics : []).forEach(t => {
-        if (topicNumberOf(t) === num) cands.push(mi);
-      });
-    });
-    const uniq = [...new Set(cands)];
-    if (uniq.length === 1) return { kind: "module", idx: uniq[0] };
-    if (uniq.length > 1) {
-      const byTopic2 = moduleIdxForTopicName(topicName, uniq.map(i => modules[i]));
-      if (byTopic2 !== null) return { kind: "module", idx: uniq[byTopic2] };
-    }
-  }
-  return { kind: "general" };
-}
-// Filtro de material para un alumno: { syllabus, entryModuleIdx,
-// currentModuleIdx, entryModuleTitle, currentModuleTitle } o null si no
-// se puede filtrar (sin temario o sin fecha de ingreso definible): en
-// ese caso se muestra todo como antes. course: {startDate, syllabus,
-// currentClass}; student: {startDate}. Sin semana actual definida el
-// tope es la última materia.
-function materialFilterFor(courseId, course, student) {
-  const syllabus = (course && Array.isArray(course.syllabus)) ? course.syllabus : [];
-  const calendar = buildWeekCalendar(courseId, syllabus);
-  if (!calendar.length) return null;
-  const entryWeek = entryWeek1Based(course && course.startDate, student && student.startDate);
-  if (entryWeek == null) return null;
-  const entryModuleIdx = moduleIndexOfWeek(calendar, entryWeek - 1);
-  if (entryModuleIdx == null) return null;
-  const titles = moduleTitlesOf(calendar);
-  const curWeekIdx = storedToWeekIdx(calendar, course && course.currentClass);
-  const currentModuleIdx = curWeekIdx == null ? titles.length - 1 : moduleIndexOfWeek(calendar, curWeekIdx);
-  if (currentModuleIdx == null) return null;
-  return { syllabus, entryModuleIdx, currentModuleIdx, entryModuleTitle: titles[entryModuleIdx] || "", currentModuleTitle: titles[currentModuleIdx] || "" };
-}
-// Opciones del selector de materia: una por módulo del curso.
-function moduleOptionsHtml(calendar, selectedModuleIdx) {
-  return moduleTitlesOf(calendar).map((t, i) => `<option value="${i}"${i === selectedModuleIdx ? " selected" : ""}>${esc(t)}</option>`).join("");
 }
 // "YYYY-MM-DD" -> Date local, o null si no se puede leer.
 function parseYMD(s) {
@@ -1581,11 +1412,14 @@ async function setupPaymentsBlock(st, course) {
   const box = $("pay-list-" + st.id);
   const form = $("pay-form-" + st.id);
   if (!box || !form) return;
-  const calendar = buildWeekCalendar(st.courseId, (course && course.syllabus) || []);
   const payments = await loadStudentPayments(st);
   const blocked = new Set();
   payments.forEach(p => { if (p.status === "confirmado" || p.status === "pendiente") (p.weeks || []).forEach(w => blocked.add(w)); });
-  const weeks = payableWeeks({ courseStart: (course && course.startDate) || st.startDate || "", totalWeeks: calendar.length, studentStart: st.startDate || "", today: todayYMD(), blockedWeeks: [...blocked] });
+  // Sin tope de calendario en el portal del alumno: el temario vive en
+  // courses/{id}/private/config (sin acceso para el alumno), así que
+  // totalWeeks es 0 (sin tope; solo manda la fecha, hasta hoy). El
+  // servidor valida que cada semana elegida sí se pueda pagar.
+  const weeks = payableWeeks({ courseStart: (course && course.startDate) || st.startDate || "", totalWeeks: 0, studentStart: st.startDate || "", today: todayYMD(), blockedWeeks: [...blocked] });
   const listEl = $("pay-weeks-" + st.id);
   const totalEl = $("pay-total-" + st.id);
   const getSelected = () => [...form.querySelectorAll("input[data-pay-week]:checked")].map(cb => ({ week: +cb.getAttribute("data-pay-week"), date: cb.getAttribute("data-pay-date"), price: +cb.getAttribute("data-pay-price") }));
@@ -1603,6 +1437,28 @@ async function setupPaymentsBlock(st, course) {
   updateTotal();
   const btn = $("btn-pay-" + st.id);
   if (btn) btn.addEventListener("click", () => sendStudentPayment(st, { getSelected, refresh: () => setupPaymentsBlock(st, course) }));
+}
+// Traduce un error del servidor (createStudentPayment) a los mismos
+// mensajes que ya mostraba la validación en el portal. El servidor
+// valida lo mismo que el portal (monto, fecha, comprobante repetido,
+// límite diario, semanas pagables), así que un rechazo del servidor es
+// casi siempre una carrera (otro pago entró entre tanto) o un envío
+// alterado: el mensaje le dice al alumno qué pasó sin exponer el
+// detalle técnico. total: el total calculado de las semanas elegidas
+// (para el mensaje de monto).
+function paymentServerErrorMessage(e, total) {
+  const code = String((e && e.code) || "");
+  const detail = String(((e && e.details) || "") + " " + ((e && e.message) || "")).toLowerCase();
+  const has = (...words) => words.some(w => detail.includes(w));
+  if (code.includes("resource-exhausted") || has("3 veces", "too many")) return "Este comprobante ya se envió 3 veces hoy, inténtalo mañana.";
+  if (code.includes("already-exists") || has("duplicado", "ya se usó", "ya está en revisión", "duplicate")) {
+    if (has("confirmado", "pagado")) return "Este comprobante ya se usó en un pago confirmado (pagado). No se puede volver a usar.";
+    return "Este comprobante ya está en revisión en otro pago. Espera a que tu maestro lo revise.";
+  }
+  if (has("futura", "future")) return "La fecha de la transferencia no puede ser futura.";
+  if (has("monto", "amount", "total")) return "El monto no coincide: las semanas elegidas suman $" + total + ". Revisa el monto de tu transferencia.";
+  if (code.includes("failed-precondition") || has("semana", "week", "pagable", "payable")) return "Una de las semanas elegidas ya no se puede pagar (ya está pagada o en revisión). Vuelve a cargar y elige otras semanas.";
+  return "No se pudo enviar tu comprobante. Inténtalo de nuevo.";
 }
 async function sendStudentPayment(st, ctx) {
   const errEl = $("pay-err-" + st.id), msgEl = $("pay-msg-" + st.id), warnEl = $("pay-warn-" + st.id);
@@ -1636,21 +1492,19 @@ async function sendStudentPayment(st, ctx) {
     // storage.rules. Igual que los documentos del alumno.
     const path = "alumnos/" + st.teacherId + "/" + st.id + "/comprobante_" + Date.now() + "_" + file.name.replace(/[^A-Za-z0-9._-]/g, "_");
     await storage.ref(path).put(file);
-    await db.collection("students").doc(st.id).collection("payments").add({
-      studentId: st.id,
-      studentName: myName || "",
-      studentAuthUid: myUid || "",
-      teacherId: st.teacherId || "",
-      courseId: st.courseId || "",
-      weeks: selected.map(w => w.week),
-      amount: Number(amount),
-      receiptPath: path,
-      receiptHash: hash,
-      receiptDate,
-      status: "pendiente",
-      rejectReason: "",
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    // El pago lo registra el servidor (createStudentPayment): valida
+    // monto, semanas, fecha y comprobante y escribe el pago en
+    // `payments`. El portal ya no escribe directo en la subcolección.
+    // Si el servidor rechaza, se muestra el mismo mensaje que la
+    // validación del portal para ese caso (ver
+    // paymentServerErrorMessage).
+    try {
+      const fn = firebase.functions().httpsCallable("createStudentPayment");
+      await fn({ studentId: st.id, weeks: selected.map(w => w.week), amount: Number(amount), transferDate: receiptDate, receiptPath: path, receiptHash: hash });
+    } catch (callErr) {
+      showErr(errEl, paymentServerErrorMessage(callErr, computeTotal(selected)));
+      return;
+    }
     showOk(msgEl, "Comprobante enviado. Tu maestro lo revisará y te confirmará aquí mismo.");
     await ctx.refresh();
   } catch (e) {

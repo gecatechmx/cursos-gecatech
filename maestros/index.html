@@ -150,6 +150,16 @@
   .login-box p { text-align:center; color:var(--muted); font-size:14px; }
   .docline { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .docline a { color:var(--navy); }
+  /* Fichita de material de Classroom (Mis clases → Materiales, Mis
+     materiales y Ver material): tarjeta con borde, título destacado y
+     enlaces como botones. El overflow-wrap evita que una URL larga sin
+     espacios (p. ej. la del 3.1 Lean) ensanche la tarjeta en el celular. */
+  .mat-card { border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin:10px 0; background:#fff; max-width:100%; overflow-wrap:anywhere; word-break:break-word; }
+  .mat-card .mat-title { font-family:"Nunito","Segoe UI",system-ui,sans-serif; font-size:16px; font-weight:700; color:var(--navy); overflow-wrap:anywhere; word-break:break-word; }
+  .mat-card .mat-desc { margin-top:6px; font-size:14px; overflow-wrap:anywhere; word-break:break-word; }
+  .mat-card .mat-links { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .mat-card .mat-links a { display:inline-block; border:1px solid var(--navy); color:var(--navy); border-radius:999px; padding:5px 12px; font-size:13px; font-weight:600; text-decoration:none; background:#fff; overflow-wrap:anywhere; word-break:break-word; max-width:100%; }
+  .mat-card .mat-links a:hover { background:#eaf2f9; }
   .nw-grid { display:grid; grid-template-columns:1fr 280px; gap:18px; align-items:start; }
   .nw-side { background:#f8fafc; border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
   .radio, .check { display:flex; align-items:center; gap:6px; font-weight:400; color:var(--text); font-size:14px; margin:6px 0; }
@@ -293,7 +303,7 @@ const OWNER_UID = "K8wtJKKNkkg1Pv9bmBxxlgdpdSG3"; // UID de Auth de Anghelo,
                         // quitar el rol de gestora a otro maestro. El rol
                         // de administrador quedó solo para el dueño (el
                         // botón "Hacer admin" ya no existe).
-let courses = {};       // id -> {name, schedule, durationMonths, startDate, classroomUrl, recordings: [{title, url, date}], syllabus: [{title, topics: []}], currentClass: número viejo (índice global de tema) o {week: índice 0-based de semana} (el progreso se cuenta por semanas)}
+let courses = {};       // id -> {name, schedule, durationMonths, startDate, teacher, classroomUrl, recordings: [{title, url, date}], showDiplomas} — SOLO campos públicos. El temario y la semana actual viven en courses/{id}/private/config (ver courseConfigs) y el alumno nunca los ve.
 let currentTab = "inicio";
 // Vista del administrador: "mine" = solo lo suyo (como un maestro normal),
 // "all" = todo lo de la escuela. La pestaña "Vista administrador" pone
@@ -374,6 +384,39 @@ async function loadCourses() {
   const snap = await db.collection("courses").get();
   courses = {};
   snap.forEach(d => { courses[d.id] = d.data(); });
+  // Temario y semana actual: viven en courses/{id}/private/config, no en
+  // el documento público del curso (el alumno lee el curso pero nunca
+  // debe ver el temario ni la semana). Se cargan en paralelo junto con
+  // los cursos y quedan en la caché courseConfigs. Si un curso aún no
+  // tiene su documento de configuración (curso viejo), se trata como
+  // temario vacío y semana sin definir; al crear un curso el documento
+  // se crea siempre, aunque el temario esté vacío.
+  const ids = Object.keys(courses);
+  const cfgs = await Promise.all(ids.map(id => loadCourseConfig(id)));
+  courseConfigs = {};
+  ids.forEach((id, i) => { courseConfigs[id] = cfgs[i]; });
+}
+// ---------- Configuración privada del curso (temario + semana actual) ----------
+// courses/{id}/private/config: {syllabus: [{title, topics: []}],
+// currentClass: número viejo (índice global de tema) o {week: índice
+// 0-based de semana}}. Solo la lee/escribe quien imparte o administra el
+// curso (ver firestore.rules); el alumno no tiene acceso a este documento.
+let courseConfigs = {}; // id -> {syllabus, currentClass}
+function courseConfig(courseId) {
+  return courseConfigs[courseId] || { syllabus: [], currentClass: undefined };
+}
+function courseConfigRef(courseId) {
+  return db.collection("courses").doc(courseId).collection("private").doc("config");
+}
+async function loadCourseConfig(courseId) {
+  try {
+    const d = await courseConfigRef(courseId).get();
+    if (!d.exists) return { syllabus: [], currentClass: undefined };
+    const v = d.data() || {};
+    return { syllabus: Array.isArray(v.syllabus) ? v.syllabus : [], currentClass: v.currentClass };
+  } catch (e) {
+    return { syllabus: [], currentClass: undefined };
+  }
 }
 $("btn-login").addEventListener("click", async () => {
   const email = $("login-email").value.trim();
@@ -906,8 +949,8 @@ async function nextClassInfo() {
 // antes, pero sin esperar al resto.
 async function countPendingGrading() {
   try {
-    if (!classroomToken) { try { await refreshClassroomToken(); } catch (e) {} }
-    if (!classroomToken) return null;
+    if (!classroomConnected) { await refreshClassroomToken(); }
+    if (!classroomConnected) return null;
     const data = await classroomFetch("/courses?teacherId=me&pageSize=50");
     const crs = (data.courses || []).slice(0, 10);
     const workLists = await Promise.allSettled(crs.map(c =>
@@ -1106,7 +1149,7 @@ async function renderClasses() {
     <div class="row"><button class="small gold" type="button" data-scrollto="classes-cal">Ver calendario</button><button class="small" type="button" data-scrollto="classes-cr">Ver Classroom</button></div>
   </div><div id="classes-cal"></div><div id="classes-cr"></div>`;
   s.querySelectorAll("[data-scrollto]").forEach(b => b.addEventListener("click", () => { const el = $(b.getAttribute("data-scrollto")); if (el) { el.scrollIntoView({ behavior: "auto", block: "start" }); fijarBarra(); } }));
-  if (!classroomToken) { try { await refreshClassroomToken(); } catch (e) {} }
+  if (!classroomConnected) { await refreshClassroomToken(); }
   const real = s;
   const calBox = $("classes-cal");
   const crBox = $("classes-cr");
@@ -1201,11 +1244,15 @@ async function renderAvisos() {
 // el token con el permiso guardado, llama a Google y devuelve el
 // resultado. El permiso duradero (refresh token) se guarda en el
 // servidor (Cloud Function + Firestore, solo el servidor puede leerlo),
-// nunca en localStorage ni en el código. Por eso la conexión sobrevive
-// al recargar la página: al entrar, el portal pide un token nuevo al
-// servidor sin que tengas que conectar de nuevo.
-let classroomToken = null;
-let classroomTokenExpiresAt = 0;
+// nunca en localStorage ni en el código. El token de acceso TAMPOCO
+// llega nunca al navegador: el servidor solo le dice al portal si la
+// conexión existe ({connected: true}) y, al conectar, con qué correo de
+// Google quedó conectada. Por eso la conexión sobrevive al recargar la
+// página: al entrar, el portal le pide al servidor que renueve el token
+// en el servidor, sin que tengas que conectar de nuevo y sin que el
+// navegador vea jamás el token.
+let classroomConnected = false; // true si el servidor tiene conexión guardada de Classroom
+let classroomEmail = ""; // correo de Google con el que se conectó (solo lo devuelve exchangeClassroomCode al conectar)
 let classroomCodeClient = null;
 let classroomCourses = [];
 let classroomOpenCourse = "";
@@ -1223,30 +1270,36 @@ function loadGsiScript() {
   });
 }
 
-// Pide un token nuevo al servidor (usa el permiso guardado en el
-// servidor). Devuelve null si no hay conexión guardada.
+// Le pide al servidor que renueve el token de Classroom en el servidor
+// (usa el permiso guardado en el servidor). El servidor NO devuelve el
+// token: solo dice si la conexión existe. Devuelve true si hay conexión
+// guardada, false si no la hay o no se pudo comprobar. Nunca lanza
+// excepción: quien llama decide por el valor devuelto.
 async function refreshClassroomToken() {
-  await loadFunctionsScript();
-  const fn = firebase.functions().httpsCallable("getClassroomToken");
-  const r = await fn({});
-  const d = r.data || {};
-  if (!d.connected || !d.accessToken) {
-    classroomToken = null;
-    classroomTokenExpiresAt = 0;
-    return null;
+  try {
+    await loadFunctionsScript();
+    const fn = firebase.functions().httpsCallable("getClassroomToken");
+    const r = await fn({});
+    const d = r.data || {};
+    classroomConnected = !!d.connected;
+    return classroomConnected;
+  } catch (e) {
+    classroomConnected = false;
+    return false;
   }
-  classroomToken = d.accessToken;
-  classroomTokenExpiresAt = Date.now() + (d.expiresIn || 3600) * 1000;
-  return classroomToken;
 }
 
 // Llamada a la API de Classroom A TRAVÉS DEL SERVIDOR (función
 // classroomProxy). El navegador NO llama directo a
 // classroom.googleapis.com: esas llamadas fallan en el navegador con
 // "Failed to fetch". El servidor pide el token con el permiso guardado,
-// llama a Google y devuelve {status, data}. En 401 el servidor ya
-// reintentó una vez con un token nuevo; en 403 el permiso guardado no
-// cubre lo pedido y hay que reconectar para aceptar los permisos nuevos.
+// llama a Google y devuelve {status, data}. En 401 el token del servidor
+// caducó: el portal le pide al servidor que lo renueve en el servidor
+// (refreshClassroomToken, que no trae ningún token al navegador) y
+// reintenta la llamada UNA sola vez; si sigue en 401, la sesión de
+// Google caducó o no tiene permiso y hay que reconectar. En 403 el
+// permiso guardado no cubre lo pedido y hay que reconectar para aceptar
+// los permisos nuevos.
 async function classroomApi(path, opts) {
   const o = opts || {};
   const method = o.method || "GET";
@@ -1254,25 +1307,38 @@ async function classroomApi(path, opts) {
   const soft = !!o.soft;
   await loadFunctionsScript();
   const fn = firebase.functions().httpsCallable("classroomProxy");
-  let res;
-  try {
-    const r = await fn({ path, method, body });
-    res = r.data || {};
-  } catch (e) {
-    // No se pudo hablar con el servidor (red, sesión cerrada).
-    if (soft) return null;
-    throw new Error("No se pudo hablar con el servidor. Revisa tu conexión e intenta de nuevo.");
-  }
-  const status = res.status || 0;
+  const callOnce = async () => {
+    try {
+      const r = await fn({ path, method, body });
+      return r.data || {};
+    } catch (e) {
+      // No se pudo hablar con el servidor (red, sesión cerrada).
+      if (soft) return null;
+      throw new Error("No se pudo hablar con el servidor. Revisa tu conexión e intenta de nuevo.");
+    }
+  };
+  let res = await callOnce();
+  if (res === null) return null;
+  let status = res.status || 0;
   if (status === 401) {
-    classroomToken = null;
-    classroomTokenExpiresAt = 0;
-    if (soft) return null;
-    throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+    // Renovar en el servidor y reintentar una sola vez (el reintento no
+    // depende de ningún token en el navegador: el navegador nunca lo ve).
+    await refreshClassroomToken();
+    if (!classroomConnected) {
+      if (soft) return null;
+      throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+    }
+    res = await callOnce();
+    if (res === null) return null;
+    status = res.status || 0;
+    if (status === 401) {
+      classroomConnected = false;
+      if (soft) return null;
+      throw new Error("La sesión de Google caducó o no tiene permiso. Desconecta y vuelve a conectar.");
+    }
   }
   if (status === 403) {
-    classroomToken = null;
-    classroomTokenExpiresAt = 0;
+    classroomConnected = false;
     if (soft) return null;
     throw new Error("Classroom pidió permisos nuevos: desconecta y vuelve a conectar para aceptar los permisos de calificar y crear tareas.");
   }
@@ -1346,8 +1412,10 @@ async function connectClassroom() {
               const fn = firebase.functions().httpsCallable("exchangeClassroomCode");
               const r = await fn({ code: resp.code });
               const d = r.data || {};
-              classroomToken = d.accessToken;
-              classroomTokenExpiresAt = Date.now() + (d.expiresIn || 3600) * 1000;
+              // El servidor no devuelve el token: solo confirma la
+              // conexión y con qué correo de Google quedó conectada.
+              classroomConnected = !!d.connected;
+              classroomEmail = (d.email || "").trim();
               classroomCourses = [];
               renderSection();
             } catch (e) {
@@ -1373,8 +1441,8 @@ async function disconnectClassroom() {
   } catch (e) {
     // Aunque el servidor falle, la conexión se limpia en el portal.
   }
-  classroomToken = null;
-  classroomTokenExpiresAt = 0;
+  classroomConnected = false;
+  classroomEmail = "";
   classroomCourses = [];
   classroomOpenCourse = "";
   renderSection();
@@ -1861,13 +1929,40 @@ function crRenderAnnouncements(courseId) {
 }
 
 // Materiales publicados del curso (si la llamada falló, no se muestra).
+// Agrupados por tema como las demás vistas de material: antes era una
+// lista plana en el orden de la API, así que dos materiales del mismo
+// tema podían salir separados (p. ej. los del 2.4 arriba y al final).
+// Solo muestra courseWorkMaterial (c.materials); los adjuntos de las
+// tareas aparecen únicamente en crRenderMyMaterials ("Mis materiales").
 function crRenderMaterials(courseId) {
   const box = $("cr-mat-" + courseId);
   const c = crCache[courseId];
   if (!box || !c) return;
   if (c.materials === null) { box.innerHTML = ""; return; }
   const list = c.materials || [];
-  box.innerHTML = `<h3 style="font-size:15px;margin:12px 0 6px">Materiales</h3>` + (list.length ? list.map(m => {
+  if (!list.length) { box.innerHTML = `<h3 style="font-size:15px;margin:12px 0 6px">Materiales</h3><p class="muted">No hay materiales publicados todavía.</p>`; return; }
+  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
+  // distintos con el mismo nombre normalizado forman un solo grupo, con
+  // el nombre del primer tema que llegó. Los sin tema van al final como
+  // "Material general". La normalización es la de normTopicName; el
+  // respaldo idéntico solo cubre la extracción aislada en pruebas.
+  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const topics = c.topics || [];
+  const groups = [];
+  const groupByKey = {};
+  const topicKeyById = {};
+  topics.forEach(t => {
+    const key = norm(t.name);
+    if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
+    if (t.topicId) topicKeyById[t.topicId] = key;
+  });
+  const general = [];
+  list.forEach(m => {
+    const key = (m.topicId && topicKeyById[m.topicId]) || "";
+    if (key && groupByKey[key]) groupByKey[key].items.push(m);
+    else general.push(m);
+  });
+  const matHtml = (m) => {
     const links = [];
     (m.materials || []).forEach(mt => {
       if (mt.link && mt.link.url) links.push(`<a href="${esc(mt.link.url)}" target="_blank" rel="noopener">${esc(mt.link.title || mt.link.url)}</a>`);
@@ -1875,8 +1970,15 @@ function crRenderMaterials(courseId) {
       if (mt.youtubeVideo && mt.youtubeVideo.alternateLink) links.push(`<a href="${esc(mt.youtubeVideo.alternateLink)}" target="_blank" rel="noopener">${esc(mt.youtubeVideo.title || "Video de YouTube")}</a>`);
       if (mt.form && mt.form.formUrl) links.push(`<a href="${esc(mt.form.formUrl)}" target="_blank" rel="noopener">${esc(mt.form.title || "Formulario")}</a>`);
     });
-    return `<div class="docline"><span><b>${esc(m.title || "Material")}</b>${m.description ? `<br><span class="muted">${esc(m.description)}</span>` : ""}${links.length ? `<br>` + links.join(" · ") : ""}</span></div>`;
-  }).join("") : `<p class="muted">No hay materiales publicados todavía.</p>`);
+    return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.description ? `<div class="mat-desc muted">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.join("")}</div>` : ""}</article>`;
+  };
+  let html = `<h3 style="font-size:15px;margin:12px 0 6px">Materiales</h3>`;
+  groups.forEach(g => {
+    if (!g.items.length) return;
+    html += `<h3 style="font-size:15px">${esc(g.name)}</h3>` + g.items.map(matHtml).join("");
+  });
+  if (general.length) html += `<h3 style="font-size:15px">Material general</h3>` + general.map(matHtml).join("");
+  box.innerHTML = html;
 }
 
 // "Mis materiales": todo lo que el maestro publicó en Classroom para este
@@ -1901,21 +2003,33 @@ function crRenderMyMaterials(courseId) {
   }
   const byTopic = {};
   const general = [];
+  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
+  // distintos con el mismo nombre normalizado forman un solo grupo, con
+  // el nombre del primer tema que llegó. La normalización es la de
+  // normTopicName; el respaldo idéntico solo cubre la extracción
+  // aislada en pruebas.
+  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const groups = [];
+  const topicKeyById = {};
+  topics.forEach(t => {
+    const key = norm(t.name);
+    if (key && !byTopic[key]) { byTopic[key] = { name: t.name, items: [] }; groups.push(byTopic[key]); }
+    if (t.topicId) topicKeyById[t.topicId] = key;
+  });
   items.forEach(m => {
-    const tid = m.topicId || "";
-    if (tid && topics.some(t => t.topicId === tid)) (byTopic[tid] = byTopic[tid] || []).push(m);
+    const key = (m.topicId && topicKeyById[m.topicId]) || "";
+    if (key && byTopic[key]) byTopic[key].items.push(m);
     else general.push(m);
   });
   const matHtml = (m) => {
     const links = materialLinksOf(m);
-    return `<p><strong>${esc(m.title || "Material")}</strong>${m.updateTime ? ` <span class="muted">${fmtAvDate(m.updateTime)}</span>` : ""}${m.description ? `<br>${esc(m.description)}` : ""}${links.length ? `<br>` + links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join(" · ") : ""}</p>`;
+    return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.updateTime ? `<div class="muted">${fmtAvDate(m.updateTime)}</div>` : ""}${m.description ? `<div class="mat-desc">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join("")}</div>` : ""}</article>`;
   };
   let html = `<h3 style="font-size:15px;margin:12px 0 6px">Mis materiales</h3>`;
   if (courseLink) html += `<p><a class="btn small" href="${esc(courseLink)}" target="_blank" rel="noopener">Abrir en Classroom</a></p>`;
-  topics.forEach(t => {
-    const list = byTopic[t.topicId] || [];
-    if (!list.length) return;
-    html += `<h3 style="font-size:15px">${esc(t.name)} (${list.length})</h3>` + list.map(matHtml).join("");
+  groups.forEach(g => {
+    if (!g.items.length) return;
+    html += `<h3 style="font-size:15px">${esc(g.name)} (${g.items.length})</h3>` + g.items.map(matHtml).join("");
   });
   if (general.length) html += `<h3 style="font-size:15px">Material general (${general.length})</h3>` + general.map(matHtml).join("");
   box.innerHTML = html;
@@ -2329,19 +2443,15 @@ async function renderClassroom() {
     $("btn-cr-connect").addEventListener("click", connectClassroom);
     return;
   }
-  if (!classroomToken) {
+  if (!classroomConnected) {
     // ¿Ya había una conexión guardada? Se restaura sola, sin pedir nada.
     // Si no hay nada guardado, se muestra el botón de conectar.
     if (!classroomRestoring) {
       classroomRestoring = true;
       s.innerHTML = `<div class="card"><h2>Classroom</h2><p class="muted">Comprobando tu conexión con Classroom…</p></div>`;
-      try {
-        const tok = await refreshClassroomToken();
-        classroomRestoring = false;
-        if (tok) { renderClassroom(); return; }
-      } catch (e) {
-        classroomRestoring = false;
-      }
+      const ok = await refreshClassroomToken();
+      classroomRestoring = false;
+      if (ok) { renderClassroom(); return; }
     }
     s.innerHTML = `
     <div class="card"><h2>Classroom</h2>
@@ -2370,6 +2480,7 @@ async function renderClassroom() {
   s.innerHTML = `
   <div class="card"><h2>Classroom</h2>
     <p class="hint">Tus clases de Google Classroom. Toca "Ver tareas" para ver el trabajo de cada clase, las calificaciones, los avisos y quiénes entregaron.</p>
+    ${classroomEmail ? `<p>Conectado como <b>${esc(classroomEmail)}</b></p>` : ""}
     <div style="margin-bottom:10px"><button class="ghost small" id="btn-cr-disconnect">Desconectar</button></div>
     ${classroomCourses.length ? classroomCourses.map(c => `
       <div class="card" style="margin:10px 0">
@@ -2402,7 +2513,7 @@ const DEFAULT_COURSES = [
   { id: "especial", name: "Educación Especial", schedule: "Lunes 5-7 p.m.", teacher: "Denny Román", startDate: "", durationMonths: 12 }
 ];
 // Temario por defecto (de la planeación de cada curso). Se guarda en
-// courses/{id}.syllabus como [{title, topics: []}] y el maestro lo puede
+// courses/{id}/private/config como [{title, topics: []}] y el maestro lo puede
 // corregir en la pestaña Cursos (botón Temario). Los otros 4 cursos
 // quedan con el temario vacío hasta que se les cargue el suyo.
 const DEFAULT_SYLLABUS = {
@@ -2528,8 +2639,9 @@ function buildWeekCalendar(courseId, syllabus) {
 // queda oculto; lo nuevo aparece conforme se publica. El módulo de
 // entrada se deriva de la semana de entrada del alumno (su fecha de
 // inicio contra el inicio del curso); el módulo actual, de la semana
-// actual del curso (courses/{id}.currentClass, que se elige a mano con
-// el selector de materia o el de semana: ambos escriben lo mismo).
+// actual del curso (courses/{id}/private/config .currentClass, que se
+// elige a mano con el selector de materia o el de semana: ambos escriben
+// lo mismo).
 // La semana del curso NUNCA se le muestra al alumno: solo el nombre
 // de la materia. Sin temario o sin fecha de ingreso definible no se
 // filtra nada: se muestra todo como antes.
@@ -2639,11 +2751,14 @@ function classifyMaterialModule(m, topics, syllabus) {
 // Filtro de material para un alumno: { syllabus, entryModuleIdx,
 // currentModuleIdx, entryModuleTitle, currentModuleTitle } o null si no
 // se puede filtrar (sin temario o sin fecha de ingreso definible): en
-// ese caso se muestra todo como antes. course: {startDate, syllabus,
-// currentClass}; student: {startDate}. Sin semana actual definida el
+// ese caso se muestra todo como antes. course: {startDate} (campos
+// públicos); el temario y la semana actual se leen de
+// courses/{id}/private/config (courseConfigs), nunca del documento del
+// curso. student: {startDate}. Sin semana actual definida el
 // tope es la última materia.
 function materialFilterFor(courseId, course, student) {
-  const syllabus = (course && Array.isArray(course.syllabus)) ? course.syllabus : [];
+  const cfg = courseConfig(courseId);
+  const syllabus = Array.isArray(cfg.syllabus) ? cfg.syllabus : [];
   const calendar = buildWeekCalendar(courseId, syllabus);
   if (!calendar.length) return null;
   const entryWeek = entryWeek1Based(course && course.startDate, student && student.startDate);
@@ -2651,7 +2766,7 @@ function materialFilterFor(courseId, course, student) {
   const entryModuleIdx = moduleIndexOfWeek(calendar, entryWeek - 1);
   if (entryModuleIdx == null) return null;
   const titles = moduleTitlesOf(calendar);
-  const curWeekIdx = storedToWeekIdx(calendar, course && course.currentClass);
+  const curWeekIdx = storedToWeekIdx(calendar, cfg.currentClass);
   const currentModuleIdx = curWeekIdx == null ? titles.length - 1 : moduleIndexOfWeek(calendar, curWeekIdx);
   if (currentModuleIdx == null) return null;
   return { syllabus, entryModuleIdx, currentModuleIdx, entryModuleTitle: titles[entryModuleIdx] || "", currentModuleTitle: titles[currentModuleIdx] || "" };
@@ -2662,9 +2777,10 @@ function moduleOptionsHtml(calendar, selectedModuleIdx) {
 }
 // ¿Puede la usuaria actual marcar la materia actual de esta clase? El
 // admin siempre; la maestra, solo en sus propias clases o en los cursos
-// de su lista. La regla de Firestore /courses solo le deja cambiar
-// currentClass en los cursos que imparte (ver firestore.rules), así que
-// el selector solo se le muestra donde también puede guardarlo.
+// de su lista. La regla de Firestore de courses/{id}/private/config solo
+// le deja cambiar currentClass en los cursos que imparte (ver
+// firestore.rules), así que el selector solo se le muestra donde también
+// puede guardarlo.
 function canMarkModule(cls, me, isAdminFlag) {
   if (isAdminFlag) return true;
   if (!cls || !me) return false;
@@ -2811,7 +2927,7 @@ async function renderCourses() {
     <td><input type="number" min="6" max="24" value="${c.durationMonths || 12}" data-course="${id}" data-field="durationMonths" style="max-width:80px"> meses</td>
     <td><input type="url" value="${esc(c.classroomUrl || "")}" data-course="${id}" data-field="classroomUrl" placeholder="https://classroom.google.com/c/…" style="max-width:340px"></td>
     <td><button class="small ghost" data-rec-course="${id}">Grabaciones (${(c.recordings || []).length})</button></td>
-    <td><button class="small ghost" data-syl-course="${id}">Temario (${flattenSyllabus(c.syllabus || []).length} temas)</button></td>
+    <td><button class="small ghost" data-syl-course="${id}">Temario (${flattenSyllabus(courseConfig(id).syllabus).length} temas)</button></td>
     <td><label style="font-weight:normal"><input type="checkbox" data-course="${id}" data-field="showDiplomas" ${c.showDiplomas ? "checked" : ""} style="width:auto"> Mostrar a los alumnos</label></td>
     <td><button class="small" data-save-course="${id}">Guardar</button></td></tr>`).join("");
   s.innerHTML = `
@@ -2836,7 +2952,12 @@ async function renderCourses() {
   if (seed) seed.addEventListener("click", async () => {
     try {
       for (const c of DEFAULT_COURSES) {
-        await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "", syllabus: DEFAULT_SYLLABUS[c.id] || [] });
+        // El documento del curso lleva SOLO campos públicos; el temario
+        // va a courses/{id}/private/config (se crea siempre, aunque el
+        // temario esté vacío, para que las lecturas tengan un destino
+        // estable).
+        await db.collection("courses").doc(c.id).set({ name: c.name, schedule: c.schedule, durationMonths: c.durationMonths, startDate: c.startDate || "", teacher: c.teacher, classroomUrl: c.classroomUrl || "" });
+        await courseConfigRef(c.id).set({ syllabus: DEFAULT_SYLLABUS[c.id] || [] }, { merge: true });
       }
       await loadCourses();
       showOk($("seed-msg"), "Cursos cargados.");
@@ -2929,9 +3050,9 @@ function renderRecEditor(courseId) {
   }));
 }
 
-// ---------- Temario por curso (se guarda en courses/{id}.syllabus) ----------
+// ---------- Temario por curso (se guarda en courses/{id}/private/config) ----------
 // La semana actual del curso (lo que el maestro está dando) se guarda en
-// courses/{id}.currentClass: la elige el maestro a mano, sin cálculo por
+// courses/{id}/private/config .currentClass: la elige el maestro a mano, sin cálculo por
 // fecha; es independiente de la semana actual de cada alumno. Se guarda
 // como {week: n} (índice 0-based de semana); los valores viejos (número =
 // índice de tema) se convierten al leer con storedToWeekIdx. Con las
@@ -2942,11 +3063,12 @@ function renderSylEditor(courseId) {
   if (!box) return;
   const c = courses[courseId];
   if (!c) { box.innerHTML = ""; return; }
-  const hasSyl = Array.isArray(c.syllabus) && c.syllabus.length > 0;
+  const cfg = courseConfig(courseId);
+  const hasSyl = Array.isArray(cfg.syllabus) && cfg.syllabus.length > 0;
   const def = DEFAULT_SYLLABUS[courseId];
-  const initialText = syllabusToText(hasSyl ? c.syllabus : (def || []));
-  const calendar = buildWeekCalendar(courseId, c.syllabus || []);
-  const curWeek = storedToWeekIdx(calendar, c.currentClass);
+  const initialText = syllabusToText(hasSyl ? cfg.syllabus : (def || []));
+  const calendar = buildWeekCalendar(courseId, cfg.syllabus || []);
+  const curWeek = storedToWeekIdx(calendar, cfg.currentClass);
   const curModuleIdx = moduleIndexOfWeek(calendar, curWeek);
   box.innerHTML = `
   <div class="card" style="margin-top:12px"><h3>Temario — ${esc(c.name)}</h3>
@@ -2973,22 +3095,22 @@ function renderSylEditor(courseId) {
     showErr($("syl-err"), ""); showOk($("syl-msg"), "");
     try {
       if (v === "") {
-        await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
-        delete courses[courseId].currentClass;
+        await courseConfigRef(courseId).set({ currentClass: firebase.firestore.FieldValue.delete() }, { merge: true });
+        delete courseConfigs[courseId].currentClass;
         $("syl-course-progress").innerHTML = progressCourseHtml(calendar, null);
         const sm = $("syl-module"); if (sm) sm.value = "";
         showOk($("syl-msg"), "Semana actual del curso sin definir.");
       } else {
         const idx = parseInt(v, 10);
-        await db.collection("courses").doc(courseId).update({ currentClass: { week: idx } });
-        courses[courseId].currentClass = { week: idx };
+        await courseConfigRef(courseId).set({ currentClass: { week: idx } }, { merge: true });
+        courseConfigs[courseId].currentClass = { week: idx };
         $("syl-course-progress").innerHTML = progressCourseHtml(calendar, idx);
         const sm = $("syl-module"); if (sm) sm.value = String(moduleIndexOfWeek(calendar, idx));
         showOk($("syl-msg"), "Semana actual del curso guardada.");
       }
     } catch (e) { showErr($("syl-err"), "No se pudo guardar: " + (e.message || e)); }
   });
-  // Selector de materia: guarda en courses/{id}.currentClass la primera
+  // Selector de materia: guarda en courses/{id}/private/config .currentClass la primera
   // semana de la materia elegida (la misma fuente de verdad que el
   // selector de semana); al cambiar uno, el otro se actualiza solo.
   const sylMod = $("syl-module");
@@ -2997,16 +3119,16 @@ function renderSylEditor(courseId) {
     showErr($("syl-err"), ""); showOk($("syl-msg"), "");
     try {
       if (v === "") {
-        await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
-        delete courses[courseId].currentClass;
+        await courseConfigRef(courseId).set({ currentClass: firebase.firestore.FieldValue.delete() }, { merge: true });
+        delete courseConfigs[courseId].currentClass;
         $("syl-course-progress").innerHTML = progressCourseHtml(calendar, null);
         if (sylSel) sylSel.value = "";
         showOk($("syl-msg"), "Materia actual sin definir.");
       } else {
         const wk = firstWeekIdxOfModule(calendar, parseInt(v, 10));
         if (wk == null) return;
-        await db.collection("courses").doc(courseId).update({ currentClass: { week: wk } });
-        courses[courseId].currentClass = { week: wk };
+        await courseConfigRef(courseId).set({ currentClass: { week: wk } }, { merge: true });
+        courseConfigs[courseId].currentClass = { week: wk };
         $("syl-course-progress").innerHTML = progressCourseHtml(calendar, wk);
         if (sylSel) sylSel.value = String(wk);
         showOk($("syl-msg"), "Materia actual guardada: " + (moduleTitlesOf(calendar)[parseInt(v, 10)] || "") + ".");
@@ -3017,8 +3139,8 @@ function renderSylEditor(courseId) {
     const parsed = textToSyllabus($("syl-text").value);
     showErr($("syl-err"), ""); showOk($("syl-msg"), "");
     try {
-      await db.collection("courses").doc(courseId).update({ syllabus: parsed });
-      courses[courseId].syllabus = parsed;
+      await courseConfigRef(courseId).set({ syllabus: parsed }, { merge: true });
+      courseConfigs[courseId].syllabus = parsed;
       const n = flattenSyllabus(parsed).length;
       const btn = document.querySelector(`[data-syl-course="${courseId}"]`);
       if (btn) btn.textContent = "Temario (" + n + " temas)";
@@ -3846,13 +3968,15 @@ function resolveStudentClass(st, list) {
 function classEffectiveWeekIdx(cl, list, course) {
   // Semana actual de una clase: la suya propia; si no tiene, la del curso
   // (solo cuando es la clase por defecto: es la que continúa el avance que
-  // antes era del curso). null si no hay semana definida.
+  // antes era del curso). null si no hay semana definida. El temario y la
+  // semana del curso se leen de courses/{id}/private/config (courseConfigs).
   if (!cl || !course) return null;
-  const calendar = buildWeekCalendar(cl.courseId, course.syllabus || []);
+  const cfg = courseConfig(cl.courseId);
+  const calendar = buildWeekCalendar(cl.courseId, cfg.syllabus || []);
   if (!calendar.length) return null;
   if (cl.currentClass !== undefined && cl.currentClass !== null) return storedToWeekIdx(calendar, cl.currentClass);
   const def = defaultClassFor(list, cl.courseId);
-  if (def && def.id === cl.id) return storedToWeekIdx(calendar, course.currentClass);
+  if (def && def.id === cl.id) return storedToWeekIdx(calendar, cfg.currentClass);
   return null;
 }
 async function countStudentsInClass(teacherId, courseId, classId, list) {
@@ -3953,22 +4077,34 @@ function renderMaterialsHtml(data, filter) {
     });
     if (!list.length) return `<p class="muted">Aún no hay material publicado para las materias que ve este alumno.</p>`;
   }
-  const byTopic = {};
+  // Grupo por NOMBRE de tema normalizado (no por topicId): dos temas
+  // distintos con el mismo nombre normalizado forman un solo grupo, con
+  // el nombre del primer tema que llegó. La normalización es la de
+  // normTopicName; el respaldo idéntico solo cubre la extracción
+  // aislada en pruebas (test-portal-news-guide extrae este render solo).
+  const norm = (typeof normTopicName === "function") ? normTopicName : (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const groups = [];
+  const groupByKey = {};
+  const topicKeyById = {};
+  topics.forEach(t => {
+    const key = norm(t.name);
+    if (key && !groupByKey[key]) { groupByKey[key] = { name: t.name, items: [] }; groups.push(groupByKey[key]); }
+    if (t.topicId) topicKeyById[t.topicId] = key;
+  });
   const general = [];
   list.forEach(m => {
-    const tid = m.topicId || "";
-    if (tid && topics.some(t => t.topicId === tid)) (byTopic[tid] = byTopic[tid] || []).push(m);
+    const key = (m.topicId && topicKeyById[m.topicId]) || "";
+    if (key && groupByKey[key]) groupByKey[key].items.push(m);
     else general.push(m);
   });
   const matHtml = (m) => {
     const links = materialLinksOf(m);
-    return `<p><strong>${esc(m.title || "Material")}</strong>${m.updateTime ? ` <span class="muted">${fmtAvDate(m.updateTime)}</span>` : ""}${m.description ? `<br>${esc(m.description)}` : ""}${links.length ? `<br>` + links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join(" · ") : ""}</p>`;
+    return `<article class="mat-card"><div class="mat-title">${esc(m.title || "Material")}</div>${m.updateTime ? `<div class="muted">${fmtAvDate(m.updateTime)}</div>` : ""}${m.description ? `<div class="mat-desc">${esc(m.description)}</div>` : ""}${links.length ? `<div class="mat-links">${links.map(l => `<a target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join("")}</div>` : ""}</article>`;
   };
   let html = "";
-  topics.forEach(t => {
-    const list = byTopic[t.topicId] || [];
-    if (!list.length) return;
-    html += `<h3 style="font-size:15px">${esc(t.name)}</h3>` + list.map(matHtml).join("");
+  groups.forEach(g => {
+    if (!g.items.length) return;
+    html += `<h3 style="font-size:15px">${esc(g.name)}</h3>` + g.items.map(matHtml).join("");
   });
   if (general.length) html += `<h3 style="font-size:15px">Material general</h3>` + general.map(matHtml).join("");
   return html;
@@ -3985,7 +4121,8 @@ function classManagerHtml(teacher, list, ctx) {
   const otherOpts = Object.keys(courses).filter(id => !assigned.includes(id)).map(id => `<option value="${id}">${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const rows = shown.map(c => {
     const course = courses[c.courseId] || {};
-    const calendar = buildWeekCalendar(c.courseId, course.syllabus || []);
+    const cfg = courseConfig(c.courseId);
+    const calendar = buildWeekCalendar(c.courseId, cfg.syllabus || []);
     const ownWk = storedToWeekIdx(calendar, c.currentClass);
     const effWk = classEffectiveWeekIdx(c, list, course);
     const count = ctx.students ? ctx.students.filter(st => { const rc = resolveStudentClass(st, list); return rc && rc.id === c.id; }).length : null;
@@ -3993,12 +4130,13 @@ function classManagerHtml(teacher, list, ctx) {
       ? `<div style="margin-top:6px"><label style="font-weight:normal">Semana actual de esta clase</label><select data-class-week="${c.id}" style="max-width:260px"><option value="">Sin definir</option>${weekOptionsHtml(calendar, ownWk)}</select>${ownWk === null && effWk !== null ? ` <span class="muted">(hereda la semana del curso)</span>` : ""}</div>`
       : "";
     // Materia actual del curso: escribe lo mismo que el selector de
-    // semana del curso (courses/{id}.currentClass = primera semana de
-    // la materia elegida), así selector y Avance quedan sincronizados.
-    // La ve el admin y la maestra de esta clase (canMarkModule); la
-    // regla de Firestore solo le deja a la maestra cambiar currentClass
-    // en los cursos que imparte, así que en cursos ajenos no aparece.
-    const curModuleIdx = calendar.length ? moduleIndexOfWeek(calendar, storedToWeekIdx(calendar, course.currentClass)) : null;
+    // semana del curso (courses/{id}/private/config .currentClass =
+    // primera semana de la materia elegida), así selector y Avance quedan
+    // sincronizados. La ve el admin y la maestra de esta clase
+    // (canMarkModule); la regla de Firestore solo le deja a la maestra
+    // cambiar currentClass en los cursos que imparte, así que en cursos
+    // ajenos no aparece.
+    const curModuleIdx = calendar.length ? moduleIndexOfWeek(calendar, storedToWeekIdx(calendar, cfg.currentClass)) : null;
     const moduleSel = (calendar.length && ctx.scope !== "maestros" && canMarkModule(c, me, isAdmin))
       ? `<div style="margin-top:6px"><label style="font-weight:normal">Materia actual del curso</label><select data-course-module="${c.courseId}" style="max-width:260px"><option value="">Sin definir</option>${moduleOptionsHtml(calendar, curModuleIdx)}</select> <span class="muted">Los alumnos ven el material desde la materia en la que entraron hasta esta materia.</span></div>`
       : "";
@@ -4052,21 +4190,21 @@ function bindClassManager(box, teacher, list, ctx) {
     } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo guardar la semana: " + (e.message || e)); }
   }));
   // Selector de materia actual del curso: guarda en courses/{id}
-  // currentClass la primera semana de la materia elegida (la misma
-  // fuente de verdad que el selector de semana del curso).
+  // /private/config .currentClass la primera semana de la materia elegida
+  // (la misma fuente de verdad que el selector de semana del curso).
   box.querySelectorAll("[data-course-module]").forEach(sel => sel.addEventListener("change", async () => {
     const courseId = sel.getAttribute("data-course-module");
     const v = sel.value;
     try {
       if (v === "") {
-        await db.collection("courses").doc(courseId).update({ currentClass: firebase.firestore.FieldValue.delete() });
-        delete courses[courseId].currentClass;
+        await courseConfigRef(courseId).set({ currentClass: firebase.firestore.FieldValue.delete() }, { merge: true });
+        delete courseConfigs[courseId].currentClass;
       } else {
-        const calendar = buildWeekCalendar(courseId, (courses[courseId] || {}).syllabus || []);
+        const calendar = buildWeekCalendar(courseId, courseConfig(courseId).syllabus || []);
         const wk = firstWeekIdxOfModule(calendar, parseInt(v, 10));
         if (wk == null) return;
-        await db.collection("courses").doc(courseId).update({ currentClass: { week: wk } });
-        courses[courseId].currentClass = { week: wk };
+        await courseConfigRef(courseId).set({ currentClass: { week: wk } }, { merge: true });
+        courseConfigs[courseId].currentClass = { week: wk };
       }
       await ctx.onChanged();
     } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo guardar la materia actual: " + (e.message || e)); }
@@ -4093,10 +4231,19 @@ function bindClassManager(box, teacher, list, ctx) {
           await delFn({ classId: id });
         } catch (e) { /* no bloquea el borrado de la clase */ }
       }
-      await db.collection("classes").doc(id).delete();
+      // El borrado de la clase lo hace el servidor (deleteClass): solo
+      // borra si la clase ya no tiene alumnos. No se borra el documento
+      // directo desde el portal.
+      await loadFunctionsScript();
+      const fn = firebase.functions().httpsCallable("deleteClass");
+      await fn({ classId: id });
       await ctx.onChanged();
       const m = document.querySelector("#cls-msg"); if (m) showOk(m, "Clase eliminada.");
-    } catch (e) { showErr(box.querySelector("#cls-err"), "No se pudo eliminar: " + (e.message || e)); }
+    } catch (e) {
+      const code = String((e && e.code) || "");
+      if (code.includes("failed-precondition")) showErr(box.querySelector("#cls-err"), "No se puede eliminar la clase porque todavía tiene alumnos. Primero cambia a esos alumnos a otra clase.");
+      else showErr(box.querySelector("#cls-err"), "No se pudo eliminar: " + (e.message || e));
+    }
   }));
   // Enlace de Meet: copiar, guardar a mano y generar el fijo en el
   // calendario de la maestra (con su permiso de Google).
@@ -4675,7 +4822,7 @@ async function renderStudents() {
   // Al dar de alta: el siguiente disponible. Al editar un alumno sin ID:
   // el siguiente disponible para asignárselo. Al editar uno con ID: su ID.
   const formStudentId = editingSt ? (editingSt.studentId || suggestedStudentId) : suggestedStudentId;
-  const calendar = buildWeekCalendar(selCourse, course.syllabus || []);
+  const calendar = buildWeekCalendar(selCourse, courseConfig(selCourse).syllabus || []);
   const courseClasses = classesOfCourse(myClasses, selCourse);
   const defClass = defaultClassFor(myClasses, selCourse);
   const classTeacher = seeAll() ? teacherObj : me;
