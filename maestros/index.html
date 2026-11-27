@@ -2111,12 +2111,13 @@ async function showCourseWork(courseId) {
     // Si no se pueden cargar, la vista sigue igual sin la anotación.
     let portalByUid = {};
     try {
-      const portalCourse = Object.entries(courses || {}).find(([, cc]) => {
-        const m = /classroom\.google\.com\/c\/([A-Za-z0-9_-]+)/.exec((cc && cc.classroomUrl) || "");
-        return m && m[1] === courseId;
-      });
-      if (portalCourse) {
-        const portalStudents = await fetchStudents(portalCourse[0], me ? me.uid : "");
+      // Mismo mapeo que portalCourseIdOfClassroomId: el segmento de la
+      // classroomUrl viene en base64 y courseId es el número de la API;
+      // comparar sin normalizar nunca empataba y las fichas no se
+      // vinculaban con la lista de Classroom.
+      const portalCourseId = portalCourseIdOfClassroomId(courseId);
+      if (portalCourseId) {
+        const portalStudents = await fetchStudents(portalCourseId, me ? me.uid : "");
         Object.entries(roster).forEach(([uid, r]) => {
           const match = matchPortalStudent(r, portalStudents);
           if (match) portalByUid[uid] = match;
@@ -2135,7 +2136,11 @@ async function showCourseWork(courseId) {
     // sigue igual y esas secciones simplemente no aparecen.
     let topics = null;
     const tData = await classroomFetchSoft("/courses/" + encodeURIComponent(courseId) + "/topics?pageSize=50");
-    if (tData) topics = tData.topics || [];
+    // OJO (27 nov 2026): topics.list devuelve la lista bajo la clave
+    // EN SINGULAR ("topic"); leer "topics" dejaba 0 temas aunque Google
+    // devolviera los 5 (diagnóstico en vivo 14:33). La plural queda
+    // como respaldo.
+    if (tData) topics = tData.topic || tData.topics || [];
     // Si la lectura de temas falla, classroomFetchSoft devuelve null
     // en silencio y todo el material caía en "Material general" aunque
     // trajera tema asignado en Classroom (27 nov 2026: el usuario SÍ
@@ -2739,12 +2744,37 @@ function classifyMaterialModule(m, topics, syllabus) {
   }
   return { kind: "general" };
 }
+// El ID que aparece en la URL web de Classroom (classroom.google.com/c/...)
+// es el ID numérico del curso codificado en base64 (p. ej.
+// ODY5NzIyNzA1NTA0 = 869722705504). La API y classroomCourses usan el
+// número directo; la classroomUrl guardada usa el segmento codificado.
+// Se normaliza al número para comparar ambas formas: si ya es numérico
+// se usa tal cual; si no se puede decodificar a un número, se devuelve
+// el ID original sin cambios. Espejo de normalizeClassroomCourseId del
+// servidor (allí con Buffer; aquí con atob).
+function decodeClassroomCourseId(rawId) {
+  const id = String(rawId || "").trim();
+  if (!id || /^\d+$/.test(id)) return id;
+  try {
+    const b64 = id.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const decoded = atob(padded);
+    if (/^\d+$/.test(decoded)) return decoded;
+  } catch (e) { /* se devuelve el ID original */ }
+  return id;
+}
 // Id del curso del portal (courses/{id}) para un curso de Classroom,
 // buscado por su classroomUrl; "" si ningún curso del portal lo enlaza.
+// Compara los IDs ya normalizados: el segmento de la classroomUrl viene
+// en base64 y el ID de Classroom (classroomCourses[].id) es numérico;
+// sin normalizar nunca empataban y el temario no se encontraba (27 nov
+// 2026: el respaldo por número de título no se activaba en la vista de
+// maestros y todo caía en "Material general").
 function portalCourseIdOfClassroomId(classroomId) {
+  const want = decodeClassroomCourseId(classroomId);
   const found = Object.entries(courses || {}).find(([, cc]) => {
     const m = /classroom\.google\.com\/c\/([A-Za-z0-9_-]+)/.exec((cc && cc.classroomUrl) || "");
-    return m && m[1] === classroomId;
+    return m && decodeClassroomCourseId(m[1]) === want;
   });
   return found ? found[0] : "";
 }
