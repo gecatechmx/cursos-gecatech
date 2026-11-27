@@ -276,9 +276,11 @@ auth.onAuthStateChanged((user) => {
 // ---------- Mis cursos ----------
 async function loadEnrollments() {
   // Solo trae las fichas vinculadas a esta cuenta (authUid == mi uid).
+  // Una ficha archivada se trata como sin vincular: no aparece en sus
+  // cursos y el portal muestra "Sin cursos vinculados".
   const snap = await db.collection("students").where("authUid", "==", myUid).get();
   const list = [];
-  snap.forEach(d => { const data = d.data(); if (data.active !== false) list.push({ id: d.id, ...data }); });
+  snap.forEach(d => { const data = d.data(); if (data.active !== false && data.archived !== true) list.push({ id: d.id, ...data }); });
   list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   // Los cursos son independientes: se leen en paralelo (antes, uno
   // tras otro en serie).

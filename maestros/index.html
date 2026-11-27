@@ -4968,7 +4968,11 @@ async function renderStudents() {
   // migración en lectura para los alumnos viejos sin classId).
   if (selClass && !courseClasses.some(c => c.id === selClass)) selClass = "";
   students.forEach(st => { st._class = resolveStudentClass(st, myClasses); st._classLabel = st._class ? classScheduleText(st._class.days, st._class.startTime, st._class.endTime) : ""; });
-  const shownStudents = selClass ? students.filter(st => st._class && st._class.id === selClass) : students;
+  // Archivados: no aparecen en la lista normal ni en la cola de
+  // comprobantes; viven en su propia sección con "Restaurar".
+  const activeStudents = students.filter(st => st.archived !== true);
+  const archivedStudents = students.filter(st => st.archived === true);
+  const shownStudents = selClass ? activeStudents.filter(st => st._class && st._class.id === selClass) : activeStudents;
   paymentsQueueStudents = shownStudents;
   const classOptions = courseClasses.map(c => `<option value="${c.id}"${c.id === selClass ? " selected" : ""}>${esc(classScheduleText(c.days, c.startTime, c.endTime))}</option>`).join("");
   const selClassDoc = selClass ? courseClasses.find(c => c.id === selClass) : null;
@@ -4996,6 +5000,48 @@ async function renderStudents() {
   const noCourseClassMsg = classOwnerIsSelf
     ? "Aún no tienes una clase registrada para " + (course.name || "este curso") + ". Regístrala para poder dar de alta alumnos en este curso."
     : classOwnerName + " aún no tiene una clase registrada para " + (course.name || "este curso") + ". Regístrale una para poder dar de alta alumnos en este curso.";
+  // Tarjeta de un alumno (normal o archivado): la ficha lleva la sección
+  // Archivar (solo admin) con confirmación en dos pasos dentro de la
+  // página, y Restaurar cuando ya está archivado.
+  const studentCardHtml = (st) => {
+      // Color de la tarjeta: el curso propio del alumno (no el del filtro).
+      const stCourseName = (courses[st.courseId] && courses[st.courseId].name) || course.name || "";
+      const stColor = courseColorByName(stCourseName);
+          return `<article class="student-card" id="student-card-${st.id}">
+      <div class="st-head"><span class="st-ini" style="background:${stColor}">${esc(initialsOf(st.name))}</span><div class="st-title"><strong class="st-name">${esc(st.name)}</strong>${st.archived === true ? ` <span class="badge off">Archivado</span>` : ""}<br><span class="st-course" style="color:${stColor}">${esc(stCourseName)}</span></div></div>
+      <dl class="st-meta">
+        <div><dt>Clase</dt><dd>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</dd></div>
+        <div><dt>CURP</dt><dd>${esc(st.curp || "—")}</dd></div>
+        <div><dt>Teléfono</dt><dd>${esc(st.phone || "—")}</dd></div>
+        <div><dt>Correo (Classroom)</dt><dd>${esc(st.email || "—")}</dd></div>
+        <div><dt>Inicio</dt><dd>${esc(st.startDate || "—")}</dd></div>
+        <div><dt>Generación</dt><dd>${st.generation ? esc(st.generation) : "—"}</dd></div>
+        <div><dt>ID</dt><dd>${esc(st.studentId || "—")}</dd></div>
+      </dl>
+      <div class="st-account">${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</div>
+      <div class="st-actions"><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""} <button class="small ghost" data-ficha="${st.id}">Ver ficha</button></div>
+      <div id="ficha-${st.id}" class="st-ficha hidden">
+        ${calendar.length ? `<div class="st-ficha-sec"><h4>Avance</h4>${studentProgressCell(st, calendar)}</div>` : ""}
+        <div class="st-ficha-sec"><h4>Documentos</h4>
+          ${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}
+          <div id="docs-row-${st.id}" class="hidden"><div id="docs-box-${st.id}"></div></div>
+        </div>
+        <div class="st-ficha-sec"><h4>Pagos</h4>
+          <button class="small ghost" data-payments="${st.id}">Ver pagos</button>
+          <div id="payments-row-${st.id}" class="hidden"><div id="payments-box-${st.id}"></div><div id="pay-ficha-err-${st.id}" class="err"></div></div>
+        </div>
+        <div class="st-ficha-sec"><h4>Cuenta de acceso</h4>
+          ${isAdmin ? `<p class="muted">Contraseña: ${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</p>` : ""}
+          <div id="acct-row-${st.id}" class="${st.authUid ? "hidden" : ""}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></div>
+          <div id="unlink-row-${st.id}" class="${st.authUid ? "" : "hidden"}"><p>Cuenta vinculada: <strong>${st.accountEmail ? esc(st.accountEmail) : "sin correo guardado"}</strong></p><div style="margin-top:10px"><button class="small ghost" data-unlink-account="${st.id}" style="color:var(--err)">Desvincular cuenta</button></div><div id="unlink-msg-${st.id}" class="okmsg"></div><div id="unlink-err-${st.id}" class="err"></div><p class="muted">Al desvincular, el alumno dejará de ver este curso en su portal. Su cuenta seguirá existiendo y seguirá vinculada a sus otros cursos si los tiene.</p></div>
+        </div>
+        ${isAdmin ? `<div class="st-ficha-sec"><h4>${st.archived === true ? "Archivado" : "Archivar"}</h4>
+          ${st.archived === true ? `<p class="muted">Este alumno está archivado: no aparece en la lista y no puede entrar a su portal. Su ficha, pagos y documentos se conservan.</p><div style="margin-top:10px"><button class="small gold" data-restore="${st.id}">Restaurar alumno</button></div><div id="archive-msg-${st.id}" class="okmsg"></div><div id="archive-err-${st.id}" class="err"></div>` : `<p class="muted">Al archivar, el alumno deja de verse en la lista y no puede entrar a su portal, pero su ficha, pagos y documentos quedan guardados. Se puede restaurar después.</p><div id="archive-step1-${st.id}"><button class="small ghost" data-archive="${st.id}" style="color:var(--err)">Archivar alumno</button></div><div id="archive-step2-${st.id}" class="hidden"><p><strong>¿Seguro?</strong> El alumno dejará de verse en la lista y no podrá entrar a su portal, pero su ficha, pagos y documentos quedan guardados.</p><div style="margin-top:10px"><button class="small gold" data-archive-confirm="${st.id}">Sí, archivar</button> <button class="small ghost" data-archive-cancel="${st.id}">Cancelar</button></div></div><div id="archive-msg-${st.id}" class="okmsg"></div><div id="archive-err-${st.id}" class="err"></div>`}
+        </div>` : ""}
+        <div><button class="small ghost" data-ficha="${st.id}">Cerrar ficha</button></div>
+      </div>
+    </article>`;
+  };
   s.innerHTML = `
   <div class="card"><h2>Preguntas de alumnos</h2>
     <p class="hint">Las preguntas que tus alumnos te hacen desde su portal. Responde las pendientes aquí mismo.</p>
@@ -5026,42 +5072,9 @@ async function renderStudents() {
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
     <div id="st-pass-msg" class="okmsg"></div><div id="st-pass-err" class="err"></div>
     <div class="students-grid">
-    ${shownStudents.map(st => {
-      // Color de la tarjeta: el curso propio del alumno (no el del filtro).
-      const stCourseName = (courses[st.courseId] && courses[st.courseId].name) || course.name || "";
-      const stColor = courseColorByName(stCourseName);
-      return `<article class="student-card" id="student-card-${st.id}">
-      <div class="st-head"><span class="st-ini" style="background:${stColor}">${esc(initialsOf(st.name))}</span><div class="st-title"><strong class="st-name">${esc(st.name)}</strong><br><span class="st-course" style="color:${stColor}">${esc(stCourseName)}</span></div></div>
-      <dl class="st-meta">
-        <div><dt>Clase</dt><dd>${st._class ? esc(st._classLabel) : '<span class="muted">Sin asignar</span>'}</dd></div>
-        <div><dt>CURP</dt><dd>${esc(st.curp || "—")}</dd></div>
-        <div><dt>Teléfono</dt><dd>${esc(st.phone || "—")}</dd></div>
-        <div><dt>Correo (Classroom)</dt><dd>${esc(st.email || "—")}</dd></div>
-        <div><dt>Inicio</dt><dd>${esc(st.startDate || "—")}</dd></div>
-        <div><dt>Generación</dt><dd>${st.generation ? esc(st.generation) : "—"}</dd></div>
-        <div><dt>ID</dt><dd>${esc(st.studentId || "—")}</dd></div>
-      </dl>
-      <div class="st-account">${st.authUid ? `<span class="badge teacher">Con cuenta${st.accountEmail ? " · " + esc(st.accountEmail) : ""}</span> <button class="small ghost" data-unlink="${st.id}">Quitar acceso</button>` : `<button class="small" data-account="${st.id}">Crear cuenta</button>`}</div>
-      <div class="st-actions"><button class="small" data-edit="${st.id}">Editar</button>${isAdmin && st.authUid ? ` <button class="small ghost" data-reset-student-pass="${st.id}">Restablecer</button>` : ""} <button class="small ghost" data-ficha="${st.id}">Ver ficha</button></div>
-      <div id="ficha-${st.id}" class="st-ficha hidden">
-        ${calendar.length ? `<div class="st-ficha-sec"><h4>Avance</h4>${studentProgressCell(st, calendar)}</div>` : ""}
-        <div class="st-ficha-sec"><h4>Documentos</h4>
-          ${(isAdmin || st.teacherId === me.uid) ? `<button class="small ghost" data-docs="${st.id}">Ver / subir</button>` : `<span class="muted">—</span>`}
-          <div id="docs-row-${st.id}" class="hidden"><div id="docs-box-${st.id}"></div></div>
-        </div>
-        <div class="st-ficha-sec"><h4>Pagos</h4>
-          <button class="small ghost" data-payments="${st.id}">Ver pagos</button>
-          <div id="payments-row-${st.id}" class="hidden"><div id="payments-box-${st.id}"></div><div id="pay-ficha-err-${st.id}" class="err"></div></div>
-        </div>
-        <div class="st-ficha-sec"><h4>Cuenta de acceso</h4>
-          ${isAdmin ? `<p class="muted">Contraseña: ${st.passwordChangedAt ? "cambiada el " + fmtPassDate(st.passwordChangedAt) : "nunca"}</p>` : ""}
-          <div id="acct-row-${st.id}" class="${st.authUid ? "hidden" : ""}"><div class="row"><div><label>Correo para la cuenta del alumno</label><input id="acct-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div><div><label>Contraseña inicial</label><input id="acct-pass-${st.id}" type="text" placeholder="Mínimo 6 caracteres"></div></div><div style="margin-top:10px"><button class="small gold" data-create-account="${st.id}">Crear cuenta de acceso</button></div><div id="acct-msg-${st.id}" class="okmsg"></div><div id="acct-err-${st.id}" class="err"></div><p class="muted">El alumno entrará al Portal Alumnos con este correo y contraseña. Si le quitas el acceso, su cuenta queda sin vincular (la cuenta de acceso no se borra desde aquí).</p><hr><p><strong>O vincular una cuenta que ya existe</strong></p><div class="row"><div><label>Correo de la cuenta que ya existe</label><input id="link-email-${st.id}" type="email" placeholder="correo@ejemplo.com"></div></div><div style="margin-top:10px"><button class="small gold" data-link-account="${st.id}">Vincular cuenta</button></div><div id="link-msg-${st.id}" class="okmsg"></div><div id="link-err-${st.id}" class="err"></div><p class="muted">Úsalo cuando el alumno ya tiene cuenta en el portal (por ejemplo, una maestra que también es alumna): se vincula su cuenta actual a esta ficha, sin crear otra cuenta ni cambiar su contraseña.</p></div>
-          <div id="unlink-row-${st.id}" class="${st.authUid ? "" : "hidden"}"><p>Cuenta vinculada: <strong>${st.accountEmail ? esc(st.accountEmail) : "sin correo guardado"}</strong></p><div style="margin-top:10px"><button class="small ghost" data-unlink-account="${st.id}" style="color:var(--err)">Desvincular cuenta</button></div><div id="unlink-msg-${st.id}" class="okmsg"></div><div id="unlink-err-${st.id}" class="err"></div><p class="muted">Al desvincular, el alumno dejará de ver este curso en su portal. Su cuenta seguirá existiendo y seguirá vinculada a sus otros cursos si los tiene.</p></div>
-        </div>
-        <div><button class="small ghost" data-ficha="${st.id}">Cerrar ficha</button></div>
-      </div>
-    </article>`; }).join("") || `<p class="muted">Aún no hay alumnos en este curso con este maestro.</p>`}
+    ${shownStudents.map(studentCardHtml).join("") || `<p class="muted">Aún no hay alumnos en este curso con este maestro.</p>`}
     </div>
+    ${archivedStudents.length ? `<h3 style="margin-top:18px">Archivados</h3><p class="hint">Alumnos archivados de este curso: su ficha, pagos y documentos se conservan y se pueden restaurar.</p><div class="students-grid">${archivedStudents.map(studentCardHtml).join("")}</div>` : ""}
   </div>
   ${(false && (isAdmin || isManager)) ? `<div class="card"><h2>Constancias</h2>
     <p class="hint">Busca un alumno por su ID y se jalan sus datos para la constancia. La matrícula la escribes a mano aquí mismo; no se guarda en el portal.</p>
@@ -5244,7 +5257,8 @@ async function renderStudents() {
     const box = $("payments-box-" + id);
     if (row.classList.contains("hidden")) {
       row.classList.remove("hidden");
-      const st = shownStudents.find(x => x.id === id);
+      // students (no shownStudents): la ficha de un archivado también muestra sus pagos.
+      const st = students.find(x => x.id === id);
       if (st) await renderStudentPaymentsBox(box, st, course, calendar);
     } else row.classList.add("hidden");
   }));
@@ -5266,6 +5280,39 @@ async function renderStudents() {
     if (!ficha) return;
     const hidden = ficha.classList.toggle("hidden");
     s.querySelectorAll(`[data-ficha="${id}"]`).forEach(x => { x.textContent = hidden ? "Ver ficha" : "Cerrar ficha"; });
+  }));
+  // Archivar alumno (solo admin, en su ficha): confirmación en dos pasos
+  // dentro de la página (sin confirm() nativo, que el navegador
+  // automatizado descarta solo). Restaurar lo devuelve a la lista normal.
+  s.querySelectorAll("[data-archive]").forEach(b => b.addEventListener("click", () => {
+    const id = b.getAttribute("data-archive");
+    const s1 = $("archive-step1-" + id), s2 = $("archive-step2-" + id);
+    if (s1) s1.classList.add("hidden");
+    if (s2) s2.classList.remove("hidden");
+  }));
+  s.querySelectorAll("[data-archive-cancel]").forEach(b => b.addEventListener("click", () => {
+    const id = b.getAttribute("data-archive-cancel");
+    const s1 = $("archive-step1-" + id), s2 = $("archive-step2-" + id);
+    if (s1) s1.classList.remove("hidden");
+    if (s2) s2.classList.add("hidden");
+  }));
+  s.querySelectorAll("[data-archive-confirm]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-archive-confirm");
+    b.disabled = true;
+    try {
+      await db.collection("students").doc(id).update({ archived: true, archivedAt: firebase.firestore.FieldValue.serverTimestamp(), archivedBy: me.uid });
+      await renderStudents();
+    } catch (e) { showErr($("archive-err-" + id), "No se pudo archivar: " + (e.message || e)); }
+    finally { b.disabled = false; }
+  }));
+  s.querySelectorAll("[data-restore]").forEach(b => b.addEventListener("click", async () => {
+    const id = b.getAttribute("data-restore");
+    b.disabled = true;
+    try {
+      await db.collection("students").doc(id).update({ archived: false, archivedAt: firebase.firestore.FieldValue.delete(), archivedBy: firebase.firestore.FieldValue.delete() });
+      await renderStudents();
+    } catch (e) { showErr($("archive-err-" + id), "No se pudo restaurar: " + (e.message || e)); }
+    finally { b.disabled = false; }
   }));
   s.querySelectorAll("[data-create-account]").forEach(b => b.addEventListener("click", async () => {
     const id = b.getAttribute("data-create-account");
