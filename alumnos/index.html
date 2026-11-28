@@ -336,20 +336,21 @@ function isClassToday(schedule) {
 // fecha, manda el orden del arreglo. audiencia: "maestros", "alumnos"
 // o "ambos".
 const PORTAL_NEWS = [
-  { date: "2026-11-26", audience: "ambos", title: "Tu vista de administrador, pagos manuales y más", text: "El administrador ya ve solo lo suyo y tiene una pestaña Vista administrador con todo lo de la escuela; el maestro puede registrar un pago manual cuando el alumno pagó sin subir comprobante; las entregas de Classroom ya se ven con sus archivos; hay una vista Mis materiales por tema; y la guía aparece sola una vez al día." },
-  { date: "2026-11-26", audience: "ambos", title: "Datos de pago de tu maestro en el portal", text: "Cada maestro registra sus datos bancarios (banco, titular, tarjeta y CLABE) en el portal; sus alumnos los copian desde su curso, en Datos para pagar, para pagar por transferencia sin salir del portal." },
-  { date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
-  { date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
-  { date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
-  { date: "2026-11-26", audience: "ambos", title: "Pregunta a tu maestro desde el portal", text: "Puedes escribirle una pregunta a tu maestro desde tu curso y ver su respuesta ahí mismo; tu maestro las responde desde Mis alumnos." },
-  { date: "2026-11-26", audience: "ambos", title: "Paga por transferencia y sube tu comprobante", text: "Elige las semanas que pagas, el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027) y sube la foto de tu comprobante; tu maestro lo confirma." },
-  { date: "2026-11-26", audience: "ambos", title: "Tus tareas y calificaciones en el portal", text: "En Mis tareas ves tus tareas de Classroom, si ya las entregaste y tu calificación, aunque tu nombre en Classroom sea distinto: se vinculan por tu correo." },
-  { date: "2026-11-26", audience: "maestros", title: "Confirmar antes de vincular una cuenta", text: "Al vincular la cuenta de un alumno, el portal te pide confirmar el correo y el curso antes de hacerlo." },
-  { date: "2026-11-26", audience: "maestros", title: "Desvincular la cuenta de un alumno", text: "Si un alumno ya no debe ver un curso, puedes desvincular su cuenta desde su ficha; su cuenta sigue existiendo para sus otros cursos." },
-  { date: "2026-11-26", audience: "maestros", title: "Eliminar el evento de Meet de una clase", text: "En Mis clases puedes eliminar el evento de Meet: se borra de tu calendario de Google y los alumnos dejan de ver el enlace." },
-  { date: "2026-11-26", audience: "ambos", title: "Los botones ya se ven como botones", text: "Entrar a Meet, Entrar a la clase y Ver comprobante ahora se ven como botones dorados, no como enlaces de texto." },
-  { date: "2026-11-26", audience: "ambos", title: "Si te rechazan un comprobante, puedes reenviarlo", text: "Un comprobante rechazado se puede volver a enviar; si se envía 3 veces en el mismo día, queda bloqueado hasta el día siguiente. Uno pagado o en revisión no se puede volver a usar." },
-  { date: "2026-11-26", audience: "ambos", title: "Tus tareas se vinculan por tu correo", text: "Aunque tu nombre en Classroom sea distinto al del portal, tus tareas y calificaciones se encuentran por tu correo electrónico (Classroom) de tu ficha." }
+  { id: "vista-administrador-pagos-manuales", date: "2026-11-26", audience: "ambos", title: "Tu vista de administrador, pagos manuales y más", text: "El administrador ya ve solo lo suyo y tiene una pestaña Vista administrador con todo lo de la escuela; el maestro puede registrar un pago manual cuando el alumno pagó sin subir comprobante; las entregas de Classroom ya se ven con sus archivos; hay una vista Mis materiales por tema; y la guía aparece sola cuando hay algo nuevo." },
+  { id: "datos-pago-maestro", date: "2026-11-26", audience: "ambos", title: "Datos de pago de tu maestro en el portal", text: "Cada maestro registra sus datos bancarios (banco, titular, tarjeta y CLABE) en el portal; sus alumnos los copian desde su curso, en Datos para pagar, para pagar por transferencia sin salir del portal." },
+  { id: "material-desde-ingreso", date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
+  { id: "material-por-semana-maestro", date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
+  { id: "material-por-semana", date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
+  { id: "preguntar-al-maestro", date: "2026-11-26", audience: "ambos", title: "Pregunta a tu maestro desde el portal", text: "Puedes escribirle una pregunta a tu maestro desde tu curso y ver su respuesta ahí mismo; tu maestro las responde desde Mis alumnos." },
+  { id: "pago-transferencia-comprobante", date: "2026-11-26", audience: "ambos", title: "Paga por transferencia y sube tu comprobante", text: "Elige las semanas que pagas, el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027) y sube la foto de tu comprobante; tu maestro lo confirma." },
+  { id: "tareas-calificaciones", date: "2026-11-26", audience: "ambos", title: "Tus tareas y calificaciones en el portal", text: "En Mis tareas ves tus tareas de Classroom, si ya las entregaste y tu calificación, aunque tu nombre en Classroom sea distinto: se vinculan por tu correo." },
+  { id: "confirmar-vincular-cuenta", date: "2026-11-26", audience: "maestros", title: "Confirmar antes de vincular una cuenta", text: "Al vincular la cuenta de un alumno, el portal te pide confirmar el correo y el curso antes de hacerlo." },
+  { id: "desvincular-cuenta-alumno", date: "2026-11-26", audience: "maestros", title: "Desvincular la cuenta de un alumno", text: "Si un alumno ya no debe ver un curso, puedes desvincular su cuenta desde su ficha; su cuenta sigue existiendo para sus otros cursos." },
+  { id: "eliminar-evento-meet", date: "2026-11-26", audience: "maestros", title: "Eliminar el evento de Meet de una clase", text: "En Mis clases puedes eliminar el evento de Meet: se borra de tu calendario de Google y los alumnos dejan de ver el enlace." },
+  { id: "botones-dorados", date: "2026-11-26", audience: "ambos", title: "Los botones ya se ven como botones", text: "Entrar a Meet, Entrar a la clase y Ver comprobante ahora se ven como botones dorados, no como enlaces de texto." },
+  { id: "reenviar-comprobante-rechazado", date: "2026-11-26", audience: "ambos", title: "Si te rechazan un comprobante, puedes reenviarlo", text: "Un comprobante rechazado se puede volver a enviar; si se envía 3 veces en el mismo día, queda bloqueado hasta el día siguiente. Uno pagado o en revisión no se puede volver a usar." },
+  { id: "tareas-por-correo", date: "2026-11-26", audience: "ambos", title: "Tus tareas se vinculan por tu correo", text: "Aunque tu nombre en Classroom sea distinto al del portal, tus tareas y calificaciones se encuentran por tu correo electrónico (Classroom) de tu ficha." },
+  { id: "avisos-multi-curso", date: "2026-11-27", audience: "maestros", title: "Avisos a varios cursos a la vez", text: "Ahora puedes publicar un aviso en varios cursos a la vez: marca las casillas de los cursos o 'Todos los cursos'. Cada curso recibe su copia, firmada por su maestro." }
 ];
 // Fecha "YYYY-MM-DD" a ms (inicio del día local). 0 si no se puede leer.
 function newsDateMs(dateStr) {
@@ -377,8 +378,9 @@ function newsItemHtml(n, nowMs) {
 }
 // ---------- Guía "Primeros pasos" ----------
 // Contenido en el código (no editable desde el portal): cada vez que se
-// agrega una función, se agrega su paso aquí. Se muestra sola una vez al día
-// (la marca es la fecha en localStorage) y queda siempre en el
+// agrega una función, se agrega su paso aquí. Se muestra sola solo
+// cuando hay novedades nuevas (la lista de ids vistos vive en
+// localStorage, por portal y por usuario) y queda siempre en el
 // encabezado (botón "Guía") y en Inicio.
 const GUIDE_KEY_ALUMNOS = "gecatechGuideSeenAlumnos";
 const GUIDE_STEPS_ALUMNOS = [
@@ -410,26 +412,72 @@ function wireGuideButtonsAlumnos(root) {
     renderAccount();
   }));
 }
-// Una vez al día: la guía se abre sola encima de la página, con un botón
-// para cerrarla. La marca es la fecha local (AAAA-MM-DD) y vive en
-// localStorage de este navegador.
-function guideToday() {
-  const d = new Date();
-  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+// La guía se abre sola solo cuando hay novedades nuevas para este
+// usuario, no por fecha: cada entrada de PORTAL_NEWS tiene un id
+// estable y se guarda la lista de ids ya vistos en localStorage, en
+// una clave por portal y por usuario (dos cuentas en el mismo
+// navegador no se mezclan; maestros y alumnos tampoco, aunque
+// compartan dominio). Abrir la guía a mano no marca nada como visto;
+// cerrarla sin pulsar "Entendido, empezar" o un botón "Ir a …"
+// tampoco: vuelve a aparecer en la siguiente entrada.
+// Los ids de PORTAL_NEWS no se reutilizan ni se cambian nunca: una
+// entrada futura lleva su propio id único.
+function guideSeenIdsKey() {
+  return "gecatechGuideSeenIdsAlumnos:" + (myUid || "anon");
 }
-function guideSeenAlumnos() {
-  try { return localStorage.getItem(GUIDE_KEY_ALUMNOS) === guideToday(); } catch (e) { return true; }
+// Lista de ids vistos (null si nunca se guardó nada en este navegador).
+function readGuideSeenIds() {
+  try {
+    const raw = localStorage.getItem(guideSeenIdsKey());
+    if (raw == null) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(id => typeof id === "string" && id);
+  } catch (e) { return null; }
 }
+// Novedades visibles en este portal (audiencia "alumnos" o "ambos"),
+// en el orden del arreglo. Sin id no se puede seguir una entrada, así
+// que las entradas sin id no disparan la guía.
+function guideVisibleNews() {
+  return (PORTAL_NEWS || []).filter(n => n && n.id && (n.audience === "alumnos" || n.audience === "ambos"));
+}
+function guideVisibleIds() {
+  return guideVisibleNews().map(n => n.id);
+}
+// Marca como vistos TODOS los ids visibles para esta audiencia (no
+// solo los nuevos): es lo que se guarda al pulsar "Entendido,
+// empezar" o un botón "Ir a …".
 function markGuideSeenAlumnos() {
-  try { localStorage.setItem(GUIDE_KEY_ALUMNOS, guideToday()); } catch (e) {}
+  try { localStorage.setItem(guideSeenIdsKey(), JSON.stringify(guideVisibleIds())); } catch (e) {}
 }
-function showGuideOverlay() {
+// Novedades pendientes y si es la primera entrada de este usuario.
+// - Con clave nueva: pendientes = visibles cuyo id no está en la lista.
+// - Sin clave nueva pero con la clave vieja (fecha): el usuario ya vio
+//   la guía antes del cambio; se siembra la clave nueva con los ids
+//   actuales SIN mostrar la guía.
+// - Sin ninguna clave: primera entrada; se muestra la guía una vez.
+function guidePendingNews() {
+  try {
+    const seen = readGuideSeenIds();
+    if (seen !== null) {
+      const set = new Set(seen);
+      return { unseen: guideVisibleNews().filter(n => !set.has(n.id)), firstVisit: false };
+    }
+    if (localStorage.getItem(GUIDE_KEY_ALUMNOS) != null) {
+      markGuideSeenAlumnos();
+      return { unseen: [], firstVisit: false };
+    }
+    return { unseen: guideVisibleNews(), firstVisit: true };
+  } catch (e) { return { unseen: [], firstVisit: false }; }
+}
+function showGuideOverlay(unseen) {
   if ($("guide-overlay")) return;
   const ov = document.createElement("div");
   ov.className = "guide-overlay";
   ov.id = "guide-overlay";
   ov.innerHTML = `<div class="card"><h2>Guía: primeros pasos</h2>
     <p class="hint">Bienvenido/a al portal de alumnos. Esto es lo primero que debes hacer, en orden:</p>
+    ${unseen && unseen.length ? `<div><h3>Lo nuevo</h3><p class="hint">Esto es lo nuevo desde tu última visita:</p><ul>${unseen.map(n => `<li><strong>${esc(n.title || "Novedad")}</strong></li>`).join("")}</ul></div>` : ""}
     ${guideStepsHtmlAlumnos()}
     <div style="margin-top:16px"><button class="gold" type="button" id="btn-guide-ok">Entendido, empezar</button></div>
   </div>`;
@@ -570,7 +618,9 @@ async function enterApp() {
   if (list.length) myName = list[0].name || "";
   $("user-chip").innerHTML = esc(myName || myEmail) + "<br>Alumno/a";
   if (!list.length) {
-    s.innerHTML = `<div class="card"><h2>Sin cursos vinculados</h2><p>Tu cuenta aún no está vinculada a ningún curso. Pide a tu maestro o al administrador que te vincule.</p></div>`;
+    // Sin cursos: aún puede tener diplomados de pago activos.
+    s.innerHTML = `<div class="card"><h2>Sin cursos vinculados</h2><p>Tu cuenta aún no está vinculada a ningún curso. Pide a tu maestro o al administrador que te vincule.</p></div><div id="diplomas-section"><p class="muted">Cargando tus diplomados…</p></div>`;
+    renderMyDiplomas();
     return;
   }
   // Si el admin restableció la contraseña, se abre "Mi cuenta" y no se
@@ -697,9 +747,10 @@ async function enterApp() {
         </div>
       </div>
     </div>`;
-  }).join("");
+  }).join("") + `<div id="diplomas-section"><p class="muted">Cargando tus diplomados…</p></div>`;
   if (nextClassInfo) { renderNextClassHero(); tickCountdown(); cdTimer = setInterval(tickCountdown, 1000); }
   for (const st of list) { renderDocs($("docs-" + st.id), st); setupMaterialBlock(st); setupWorkBlock(st); setupQuestionsBlock(st); setupPaymentsBlock(st, courses[st.courseId] || {}); setupPaymentInfoBlock(st); prefetchMaterials(st); prefetchWork(st); }
+  renderMyDiplomas();
   // Botón "Ver todas las novedades" de la tarjeta de novedades.
   const btnNewsAll = $("btn-news-all");
   if (btnNewsAll) btnNewsAll.addEventListener("click", () => {
@@ -710,8 +761,177 @@ async function enterApp() {
   });
   // Los botones de la guía de Inicio (ir a cada sección).
   wireGuideButtonsAlumnos(s);
-  // Primera visita: se muestra la guía sola.
-  if (!guideSeenAlumnos()) showGuideOverlay();
+  // La guía se abre sola solo cuando hay novedades nuevas para este
+  // usuario (ids no vistos): en la primera entrada se muestra una vez
+  // y después solo cuando hay algo nuevo.
+  const pending = guidePendingNews();
+  if (pending.unseen.length) showGuideOverlay(pending.firstVisit ? null : pending.unseen);
+}
+
+// ---------- Mis diplomados (de pago) ----------
+// Portado de la copia local (24 nov) a la base viva. Solo se muestran
+// las inscripciones ACTIVAS; una clase k se desbloquea cuando la union
+// de las semanas de los pagos CONFIRMADOS incluye k.
+// Sección SEPARADA de "Mis cursos": un alumno puede tener cursos y
+// diplomados a la vez, pero se muestran en tarjetas distintas. Solo se
+// muestran las inscripciones ACTIVAS. Una clase k (1, 2, 3…) se desbloquea
+// cuando la unión de las semanas de los pagos CONFIRMADOS incluye k.
+function planLabel(plan) {
+  return plan === "completo" ? "Completo" : plan === "mitad" ? "Mitad de curso" : "Por semana";
+}
+function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("es-MX"); }
+async function renderMyDiplomas() {
+  const box = $("diplomas-section");
+  if (!box) return;
+  const enrollmentsById = {};
+  const addSnap = (snap) => snap.forEach(d => { const e = d.data(); if (e.status === "activo") enrollmentsById[d.id] = { id: d.id, ...e }; });
+  try {
+    for (const st of myEnrollments) {
+      const snap = await db.collection("diplomaEnrollments").where("studentId", "==", st.id).get();
+      addSnap(snap);
+    }
+    const snap2 = await db.collection("diplomaEnrollments").where("studentAuthUid", "==", myUid).get();
+    addSnap(snap2);
+  } catch (e) {
+    box.innerHTML = `<div class="card"><h2>Mis diplomados</h2><p class="muted">No se pudieron cargar tus diplomados. Inténtalo de nuevo más tarde.</p></div>`;
+    return;
+  }
+  const enrollments = Object.values(enrollmentsById);
+  enrollments.sort((a, b) => (a.diplomaName || "").localeCompare(b.diplomaName || "", "es"));
+  if (!enrollments.length) {
+    box.innerHTML = `<div class="card"><h2>Mis diplomados</h2><p class="muted">Aún no tienes diplomados activos.</p></div>`;
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const cards = [];
+  for (const enr of enrollments) {
+    // Datos del diplomado (nombre, maestro, total de clases y enlaces).
+    let diploma = { name: enr.diplomaName || "", teacherName: enr.teacherName || "", totalClasses: 0, classes: [] };
+    try {
+      const doc = await db.collection("diplomas").doc(enr.diplomaId).get();
+      if (doc.exists) diploma = { ...diploma, ...doc.data() };
+    } catch (e) { /* se usan los datos guardados en la inscripción */ }
+    const totalClasses = diploma.totalClasses || (Array.isArray(diploma.classes) ? diploma.classes.length : 0) || 0;
+    const classes = Array.isArray(diploma.classes) ? diploma.classes : [];
+    // Pagos y tareas de esta inscripción.
+    let payments = [];
+    try {
+      const ps = await db.collection("diplomaEnrollments").doc(enr.id).collection("payments").get();
+      ps.forEach(d => payments.push({ id: d.id, ...d.data() }));
+      payments.sort((a, b) => (a.date || "") < (b.date || "") ? 1 : -1);
+      for (const p of payments) {
+        if (p.receiptPath) { try { p.receiptUrl = await storage.ref(p.receiptPath).getDownloadURL(); } catch (_) { p.receiptUrl = ""; } }
+      }
+    } catch (e) { payments = []; }
+    let tasks = [];
+    try {
+      const ts = await db.collection("diplomaEnrollments").doc(enr.id).collection("tasks").get();
+      ts.forEach(d => tasks.push({ id: d.id, ...d.data() }));
+      tasks.sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0));
+      for (const t of tasks) {
+        if (t.filePath) { try { t.fileUrl = await storage.ref(t.filePath).getDownloadURL(); } catch (_) { t.fileUrl = ""; } }
+      }
+    } catch (e) { tasks = []; }
+    const paidWeeks = new Set();
+    payments.forEach(p => { if (p.confirmed) (p.weeks || []).forEach(w => paidWeeks.add(Number(w))); });
+    // Clases en orden, con candado en las no pagadas.
+    let classesHtml = "";
+    if (classes.length) {
+      classesHtml = classes.map((c, i) => {
+        const k = i + 1;
+        const unlocked = paidWeeks.has(k);
+        return unlocked
+          ? `<p><a target="_blank" rel="noopener" href="${esc(c.url || "")}">Clase ${k}: ${esc(c.title || "")}</a></p>`
+          : `<p class="muted">Clase ${k}: ${esc(c.title || "")} — Bloqueada (paga esta semana para desbloquearla)</p>`;
+      }).join("");
+      for (let k = classes.length + 1; k <= totalClasses; k++) {
+        classesHtml += `<p class="muted">Clase ${k} — Sin enlace todavía</p>`;
+      }
+    } else {
+      classesHtml = `<p class="muted">El maestro aún no sube las clases de este diplomado.</p>`;
+    }
+    const eid = enr.id;
+    cards.push(`<div class="card">
+      <h2>${esc(diploma.name || enr.diplomaName || "Diplomado")}</h2>
+      <p class="hint">Maestro/a: ${esc(diploma.teacherName || enr.teacherName || "")} · Plan: ${planLabel(enr.paymentPlan)} · Pagadas ${paidWeeks.size} de ${totalClasses || "?"} semanas</p>
+      <h3>Clases</h3>
+      ${classesHtml}
+      <h3 style="margin-top:14px">Mis pagos</h3>
+      ${payments.length ? payments.map(p => `<div class="docline"><span><b>${esc(p.date || "")}</b> · ${fmtMoney(p.amount)} · Semanas: ${(p.weeks || []).join(", ") || "—"}</span><span>${p.confirmed ? `<span class="badge">Confirmado</span>` : `<span class="badge off">Pendiente de confirmación</span>`} ${p.receiptUrl ? `<a target="_blank" rel="noopener" href="${esc(p.receiptUrl)}">Ver comprobante</a>` : ""}</span></div>`).join("") : `<p class="muted">Aún no registras pagos en este diplomado.</p>`}
+      ${totalClasses ? `
+      <h3 style="margin-top:14px">Subir comprobante de pago</h3>
+      <div class="row">
+        <div><label>Monto (MXN)</label><input id="pay-amount-${eid}" type="number" min="0" step="1" placeholder="Ej. 150"></div>
+        <div><label>Fecha del pago</label><input id="pay-date-${eid}" type="date" value="${today}"></div>
+      </div>
+      <label>Semanas que cubre este pago</label>
+      <div>${Array.from({ length: totalClasses }, (_, i) => i + 1).map(k => `<label style="display:inline-block;margin:4px 10px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="pay-week-${eid}" value="${k}" style="width:auto"> Semana ${k}</label>`).join("")}</div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Comprobante (PDF o imagen, máx. ${MAX_FILE_MB} MB)</label><input id="pay-file-${eid}" type="file" accept="application/pdf,image/*"></div>
+      </div>
+      <div style="margin-top:10px"><button class="small gold" id="btn-pay-${eid}">Enviar comprobante</button></div>
+      <div id="pay-msg-${eid}" class="okmsg"></div><div id="pay-err-${eid}" class="err"></div>` : `<p class="muted">El diplomado aún no tiene número de clases configurado; por ahora no puedes subir comprobantes.</p>`}
+      <h3 style="margin-top:14px">Subir trabajo o proyecto</h3>
+      <div class="row">
+        <div><label>Título del trabajo</label><input id="task-title-${eid}" placeholder="Ej. Proyecto final"></div>
+        <div><label>Archivo (PDF, imagen o documento, máx. ${MAX_FILE_MB} MB)</label><input id="task-file-${eid}" type="file" accept="application/pdf,image/*,.doc,.docx,.ppt,.pptx"></div>
+      </div>
+      <div style="margin-top:10px"><button class="small gold" id="btn-task-${eid}">Subir trabajo</button></div>
+      <div id="task-msg-${eid}" class="okmsg"></div><div id="task-err-${eid}" class="err"></div>
+      <h3 style="margin-top:14px">Mis trabajos</h3>
+      ${tasks.length ? tasks.map(t => `<div class="docline"><span><b>${esc(t.title || "")}</b> · ${esc(t.fileName || "")}</span><span>${t.status === "revisado" ? `<span class="badge">Revisado</span>` : `<span class="badge off">Entregado</span>`} ${t.fileUrl ? `<a target="_blank" rel="noopener" href="${esc(t.fileUrl)}">Abrir</a>` : ""}</span></div>`).join("") : `<p class="muted">Aún no subes trabajos en este diplomado.</p>`}
+    </div>`);
+  }
+  box.innerHTML = cards.join("");
+  // --- Listeners de subida por inscripción ---
+  for (const enr of enrollments) {
+    const eid = enr.id;
+    const btnPay = $("btn-pay-" + eid);
+    if (btnPay) btnPay.addEventListener("click", async () => {
+      const amount = parseFloat($("pay-amount-" + eid).value) || 0;
+      const date = $("pay-date-" + eid).value || today;
+      const weeks = [...document.querySelectorAll(".pay-week-" + eid + ":checked")].map(x => parseInt(x.value, 10)).sort((a, b) => a - b);
+      const file = $("pay-file-" + eid).files[0];
+      showErr($("pay-err-" + eid), ""); showOk($("pay-msg-" + eid), "");
+      if (amount <= 0) { showErr($("pay-err-" + eid), "Escribe el monto del pago."); return; }
+      if (!weeks.length) { showErr($("pay-err-" + eid), "Elige al menos una semana que cubre este pago."); return; }
+      if (!file) { showErr($("pay-err-" + eid), "Elige el archivo del comprobante (PDF o imagen)."); return; }
+      if (file.type !== "application/pdf" && !/^image\//.test(file.type) && !/\.(pdf|png|jpe?g|webp)$/i.test(file.name)) { showErr($("pay-err-" + eid), "Solo se aceptan PDF o imágenes."); return; }
+      if (file.size > MAX_FILE_MB * 1024 * 1024) { showErr($("pay-err-" + eid), "El archivo es muy grande (máximo " + MAX_FILE_MB + " MB)."); return; }
+      btnPay.disabled = true;
+      try {
+        const path = "diplomados/" + enr.teacherId + "/" + enr.studentId + "/" + Date.now() + "_" + file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        await storage.ref(path).put(file);
+        await db.collection("diplomaEnrollments").doc(eid).collection("payments").add({
+          amount, date, weeks, receiptName: file.name, receiptPath: path,
+          confirmed: false, createdAt: Date.now()
+        });
+        showOk($("pay-msg-" + eid), "Comprobante enviado. Tu maestro lo revisará y confirmará el pago.");
+        renderMyDiplomas();
+      } catch (err) { showErr($("pay-err-" + eid), "No se pudo enviar el comprobante. Inténtalo de nuevo."); }
+      finally { btnPay.disabled = false; }
+    });
+    const btnTask = $("btn-task-" + eid);
+    if (btnTask) btnTask.addEventListener("click", async () => {
+      const title = ($("task-title-" + eid).value || "").trim();
+      const file = $("task-file-" + eid).files[0];
+      showErr($("task-err-" + eid), ""); showOk($("task-msg-" + eid), "");
+      if (!title) { showErr($("task-err-" + eid), "Escribe el título del trabajo."); return; }
+      if (!file) { showErr($("task-err-" + eid), "Elige el archivo del trabajo."); return; }
+      if (file.size > MAX_FILE_MB * 1024 * 1024) { showErr($("task-err-" + eid), "El archivo es muy grande (máximo " + MAX_FILE_MB + " MB)."); return; }
+      btnTask.disabled = true;
+      try {
+        const path = "diplomados/" + enr.teacherId + "/" + enr.studentId + "/tareas/" + Date.now() + "_" + file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        await storage.ref(path).put(file);
+        await db.collection("diplomaEnrollments").doc(eid).collection("tasks").add({
+          title, fileName: file.name, filePath: path, uploadedAt: Date.now(), status: "entregado"
+        });
+        showOk($("task-msg-" + eid), "Trabajo subido.");
+        renderMyDiplomas();
+      } catch (err) { showErr($("task-err-" + eid), "No se pudo subir el trabajo. Inténtalo de nuevo."); }
+      finally { btnTask.disabled = false; }
+    });
+  }
 }
 
 // ---------- Material de clase (Classroom) ----------

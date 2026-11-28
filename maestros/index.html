@@ -205,7 +205,7 @@
   </header>
   <div id="menu-backdrop" class="hidden"></div>
   <div class="wrap">
-    <p class="session-note">Por seguridad, tu sesión se cierra si pasas 5 minutos sin usar el portal.</p>
+    <p class="session-note">Por seguridad, tu sesión se cierra si pasas 30 minutos sin usar el portal. A los 25 minutos te avisaremos para que sigas trabajando.</p>
     <div class="portal-layout">
       <nav class="side-nav" id="tabs" aria-label="Secciones del portal"></nav>
       <div class="portal-main"><div id="section"></div></div>
@@ -317,10 +317,13 @@ let selTeacher = "";
 let editingStudentId = null;
 let suggestedStudentId = ""; // siguiente ID de alumno disponible (GEC-0001…), se calcula en renderStudents
 let selClass = "";        // filtro de clase en Alumnos ("" = todas las clases)
+let studentSearch = "";   // buscador en Mis alumnos ("" = sin filtrar; cambiar de curso o de maestro/a lo limpia, cambiar de clase no)
 let myClasses = [];       // clases del maestro seleccionado (se cargan en renderStudents)
 let editingClassId = null; // clase en edición en el formulario de clases
 let classesBoxTeacher = ""; // maestro cuyo gestor de clases está abierto en la pestaña Maestros (admin)
 let diplomasCatalog = []; // [{id, name}] catálogo de diplomados (se carga en renderStudents/renderCourses)
+let editingDiplomaId = null; // id del diplomado en edición en la tarjeta de Cursos y Diplomados (null = agregando uno nuevo)
+let editingDiplomaClasses = []; // [{title, url}] clases del diplomado en edición (se guardan con el diplomado)
 let renderStudentsGen = 0;
 let paymentsQueueStudents = []; // alumnos visibles cuya cola de comprobantes se muestra en Mis alumnos // contador de generación de renderStudents(): un render obsoleto (llegó uno más nuevo mientras esperaba) se descarta en vez de redibujar la sección
 
@@ -460,6 +463,15 @@ function showLoginForm() {
   if (chk) chk.classList.add("hidden");
   const form = $("login-form");
   if (form) form.classList.remove("hidden");
+  // Si la sesión se cerró por inactividad, avisar al volver a la
+  // pantalla de login en vez de dejar solo el formulario.
+  try {
+    if (sessionStorage.getItem("idleLogout") === "1") {
+      sessionStorage.removeItem("idleLogout");
+      const errEl = $("login-error");
+      if (errEl && !errEl.textContent.trim()) showErr(errEl, "Tu sesión se cerró por inactividad. Vuelve a entrar.");
+    }
+  } catch (e) {}
 }
 async function restoreSession(user) {
   try {
@@ -495,7 +507,7 @@ auth.onAuthStateChanged((user) => {
   authRestored = true;
   if (user) {
     // La sesión guardada se restaura sola al abrir el portal: si la
-    // última actividad fue hace más de 5 minutos, no se entra, se cierra
+    // última actividad fue hace más de 30 minutos, no se entra, se cierra
     // la sesión y queda la pantalla de inicio de sesión (v9.2).
     if (idleStale()) { closeIdleSession(); return; }
     restoreSession(user);
@@ -503,53 +515,138 @@ auth.onAuthStateChanged((user) => {
   else showLoginForm();
 });
 
-// Cierre de sesión por inactividad: 5 minutos sin usar el portal.
-// El temporizador solo corre mientras la pestaña está abierta en pantalla:
-// si se cierra la pestaña o el navegador la congela (segundo plano,
-// teléfono dormido), el temporizador muere y la sesión guardada de
-// Firebase se restauraría sola al volver a abrir el portal. Por eso,
-// además del temporizador, cada actividad guarda su hora en el navegador
-// (v9.2) y al abrir el portal o volver a la pestaña se comprueba: si la
-// última actividad fue hace más de 5 minutos, la sesión se cierra.
-const IDLE_LIMIT_MS = 5 * 60 * 1000;
+// Cierre de sesión por inactividad: aviso a los 25 minutos y cierre a
+// los 30 minutos sin usar el portal (antes 5 minutos, demasiado corto
+// para llenar una ficha o escribir un aviso). El temporizador solo corre
+// mientras la pestaña está abierta en pantalla: si se cierra la pestaña
+// o el navegador la congela (segundo plano, teléfono dormido), el
+// temporizador muere y la sesión guardada de Firebase se restauraría
+// sola al volver a abrir el portal. Por eso, además del temporizador,
+// cada actividad guarda su hora en el navegador (v9.2) y al abrir el
+// portal o volver a la pestaña se comprueba: si la última actividad fue
+// hace más de 30 minutos, la sesión se cierra. Para que un guardado no
+// salga con el token viejo tras estar la pestaña oculta, el token de
+// Firebase se renueva solo cada 25 minutos y al volver a la pestaña.
+const IDLE_LIMIT_MS = 30 * 60 * 1000;
+const IDLE_WARN_MS = 25 * 60 * 1000;
+const IDLE_REFRESH_MS = 25 * 60 * 1000;
+const IDLE_HIDDEN_REFRESH_MS = 10 * 60 * 1000;
 const IDLE_STAMP_KEY = "gecatechLastActivity";
 let idleTimer = null;
+let idleWarnTimer = null;
+let idleRefreshTimer = null;
+let idleWarnCountdown = null;
+let idleWarnDeadline = 0;
 let idleArmed = false;
+let idleHiddenAt = 0;
+let idleClosing = false;
 function stampIdleActivity() {
   try { localStorage.setItem(IDLE_STAMP_KEY, String(Date.now())); } catch (e) {}
 }
-function idleStale() {
+function idleElapsedMs() {
   try {
     const v = Number(localStorage.getItem(IDLE_STAMP_KEY));
-    // Sin marca no se puede saber: se trata como reciente; enterApp()
-    // marca la actividad al entrar, así que a partir de ahí sí hay marca.
-    if (!v) return false;
-    return Date.now() - v > IDLE_LIMIT_MS;
-  } catch (e) { return false; }
+    if (!v) return 0;
+    return Math.max(0, Date.now() - v);
+  } catch (e) { return 0; }
+}
+function idleRemainingMs() {
+  return Math.max(0, IDLE_LIMIT_MS - idleElapsedMs());
+}
+function idleStale() {
+  // Sin marca no se puede saber: se trata como reciente; enterApp()
+  // marca la actividad al entrar, así que a partir de ahí sí hay marca.
+  return idleElapsedMs() > IDLE_LIMIT_MS;
+}
+async function refreshAuthToken() {
+  // Renueva el token de Firebase para que un guardado no salga con el
+  // token viejo tras estar la pestaña oculta o el teléfono dormido.
+  try {
+    const u = auth.currentUser;
+    if (!u) return;
+    await u.getIdToken(true);
+  } catch (e) {
+    // Solo se cierra la sesión si el token fue revocado o la cuenta
+    // desactivada; un fallo de red no saca al maestro del portal.
+    if (e && (e.code === "auth/user-token-expired" || e.code === "auth/user-disabled")) closeIdleSession();
+  }
+}
+function startIdleRefresh() {
+  if (idleRefreshTimer) clearInterval(idleRefreshTimer);
+  idleRefreshTimer = setInterval(() => { if (idleArmed) refreshAuthToken(); }, IDLE_REFRESH_MS);
 }
 async function closeIdleSession() {
+  // El temporizador de cierre y la cuenta regresiva del aviso pueden
+  // dispararse en el mismo instante: solo se cierra una vez.
+  if (idleClosing) return;
+  idleClosing = true;
   idleArmed = false;
+  if (idleTimer) clearTimeout(idleTimer);
+  if (idleWarnTimer) clearTimeout(idleWarnTimer);
+  if (idleRefreshTimer) clearInterval(idleRefreshTimer);
+  hideIdleWarning();
   try { localStorage.removeItem(IDLE_STAMP_KEY); } catch (e) {}
+  try { sessionStorage.setItem("idleLogout", "1"); } catch (e) {}
   try { await auth.signOut(); } catch (e) {}
   location.reload();
+}
+function armIdleTimers() {
+  if (!idleArmed) return;
+  if (idleTimer) clearTimeout(idleTimer);
+  if (idleWarnTimer) clearTimeout(idleWarnTimer);
+  const remaining = idleRemainingMs();
+  if (remaining <= 0) { closeIdleSession(); return; }
+  idleTimer = setTimeout(closeIdleSession, remaining);
+  const warnIn = remaining - (IDLE_LIMIT_MS - IDLE_WARN_MS);
+  if (warnIn > 0) idleWarnTimer = setTimeout(showIdleWarning, warnIn);
+  else showIdleWarning();
 }
 function resetIdleTimer() {
   if (!idleArmed) return;
   stampIdleActivity();
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(closeIdleSession, IDLE_LIMIT_MS);
+  hideIdleWarning();
+  armIdleTimers();
 }
 ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach(ev =>
   window.addEventListener(ev, resetIdleTimer, { passive: true }));
-// Al volver a la pestaña después de más de 5 min sin usar el portal,
-// la sesión se cierra aunque el temporizador no haya podido correr.
+// Al volver a la pestaña: si pasaron más de 30 min sin actividad, la
+// sesión se cierra; entre 25 y 30 min se muestra el aviso con la cuenta
+// regresiva ajustada a lo que falta para el cierre; si fue menos, solo
+// se re-arman los temporizadores y se renueva el token si la pestaña
+// estuvo oculta más de 10 minutos. "focus" es respaldo de
+// "visibilitychange" (en algunos móviles no siempre se dispara al
+// desbloquear el teléfono).
+function checkIdleOnReturn() {
+  if (!idleArmed || document.hidden) return;
+  const hiddenMs = idleHiddenAt ? Date.now() - idleHiddenAt : 0;
+  idleHiddenAt = 0;
+  if (idleStale()) { closeIdleSession(); return; }
+  if (hiddenMs > IDLE_HIDDEN_REFRESH_MS) refreshAuthToken();
+  if (idleElapsedMs() >= IDLE_WARN_MS) { showIdleWarning(); return; }
+  resetIdleTimer();
+}
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && idleArmed && idleStale()) closeIdleSession();
+  if (document.hidden) {
+    idleHiddenAt = Date.now();
+    hideIdleWarning();
+    return;
+  }
+  checkIdleOnReturn();
+});
+window.addEventListener("focus", checkIdleOnReturn);
+// Actividad en otra pestaña del portal: re-armar los temporizadores con
+// el tiempo que falta según la marca, sin volver a escribirla (escribirla
+// aquí provocaría un rebote infinito de eventos entre pestañas).
+window.addEventListener("storage", (e) => {
+  if (!e || e.key !== IDLE_STAMP_KEY || !idleArmed) return;
+  hideIdleWarning();
+  armIdleTimers();
 });
 
 function enterApp() {
   idleArmed = true;
   resetIdleTimer();
+  startIdleRefresh();
   // Si el admin restableció su contraseña, se abre "Mi cuenta" y no se
   // puede salir de ahí hasta cambiarla.
   if (me.mustChangePassword === true) currentTab = "cuenta";
@@ -567,18 +664,26 @@ function enterApp() {
     adminview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>',
     maestros: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c.8-3.6 3.7-5.4 7.5-5.4s6.7 1.8 7.5 5.4"/></svg>',
     cursos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6c-1.5-1.2-3.5-1.8-6-1.8v13c2.5 0 4.5.6 6 1.8 1.5-1.2 3.5-1.8 6-1.8v-13c-2.5 0-4.5.6-6 1.8z"/><path d="M12 6v12.8"/></svg>',
+    diplomados: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5.2"/><path d="M9.2 13.4 7.6 20l4.4-2.3L16.4 20l-1.6-6.6"/><path d="M12 7.2v1.6M10.4 9h3.2"/></svg>',
     cuenta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h9M19 8h1M4 16h3M11 16h9"/><circle cx="16" cy="8" r="2.2"/><circle cx="9" cy="16" r="2.2"/></svg>',
     guia: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 0 1 4.9.8c0 1.6-2.5 2-2.5 3.4"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>'
   };
+  // Un maestro solo de diplomados (sin cursos) no ve "Mis alumnos": ve
+  // "Diplomados" en su lugar. Un maestro con cursos y diplomados ve ambas.
+  const isDiplomaTeacher = (me.diplomas || []).length > 0;
   // Menú lateral (en el celular, barra inferior): mismo orden para todos;
   // solo cambian las secciones de administración según el rol. La gestora
   // ve Maestros pero no Cursos y Diplomados; un maestro normal no ve
   // ninguna de las dos.
   const defs = isAdmin
-    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["adminview", "Vista administrador", "ADMIN"], ["maestros", "Maestros", "ADMIN"], ["cursos", "Cursos y Diplomados", "ADMIN"], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]]
+    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["adminview", "Vista administrador", "ADMIN"], ["maestros", "Maestros", "ADMIN"], ["cursos", "Cursos y Diplomados", "ADMIN"], ["diplomados", "Diplomados", ""], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]]
     : isManager
-    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]]
-    : [["inicio", "Inicio", ""], ["alumnos", "Mis alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]];
+    ? [["inicio", "Inicio", ""], ["alumnos", "Alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ["maestros", "Maestros", "ADMIN"], ["diplomados", "Diplomados", ""], ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]]
+    : [["inicio", "Inicio", ""], ["alumnos", "Mis alumnos", ""], ["clases", "Mis clases", ""], ["avisos", "Avisos", ""], ...(isDiplomaTeacher ? [["diplomados", "Diplomados", ""]] : []), ["guia", "Guía", ""], ["cuenta", "Mi cuenta", ""]];
+  // Si la pestaña actual no existe para este usuario (por ejemplo, un
+  // maestro solo de diplomados que arrancaba en "alumnos"), caer a su
+  // primera pestaña.
+  if (!defs.some(([id]) => id === currentTab)) currentTab = defs[0][0];
   const sideTitle = document.createElement("p");
   sideTitle.className = "side-title";
   sideTitle.textContent = "Menú";
@@ -612,9 +717,14 @@ function enterApp() {
   const secEl = document.getElementById("section") || document.getElementById("section-real");
   if (secEl) secEl.id = "section";
   renderSection();
-  // Primera visita: se muestra la guía sola, salvo que haya que cambiar
-  // la contraseña primero o ya se esté viendo la guía.
-  if (me.mustChangePassword !== true && currentTab !== "guia" && !guideSeenMaestros()) showGuideOverlay();
+  // La guía se abre sola solo cuando hay novedades nuevas para este
+  // usuario (ids no vistos): en la primera entrada se muestra una vez
+  // y después solo cuando hay algo nuevo. No se muestra si hay que
+  // cambiar la contraseña primero o si ya se está viendo la guía.
+  if (me.mustChangePassword !== true && currentTab !== "guia") {
+    const pending = guidePendingNews();
+    if (pending.unseen.length) showGuideOverlay(pending.firstVisit ? null : pending.unseen);
+  }
 }
 // La barra inferior del teléfono a veces quedaba sin repintar al cambiar
 // de sección (había que recargar para que volviera): se fuerza su repintado
@@ -646,6 +756,7 @@ async function renderSection() {
     else if (currentTab === "guia") renderGuide();
     else if (currentTab === "maestros") await renderTeachers();
     else if (currentTab === "cursos") await renderCourses();
+    else if (currentTab === "diplomados") await renderDiplomas();
     else if (currentTab === "classroom") await renderClassroom();
     else if (currentTab === "calendario") await renderCalendar();
     else if (currentTab === "cuenta") await renderAccount();
@@ -731,20 +842,21 @@ async function renderAdminView() {
 // fecha, manda el orden del arreglo. audiencia: "maestros", "alumnos"
 // o "ambos".
 const PORTAL_NEWS = [
-  { date: "2026-11-26", audience: "ambos", title: "Tu vista de administrador, pagos manuales y más", text: "El administrador ya ve solo lo suyo y tiene una pestaña Vista administrador con todo lo de la escuela; el maestro puede registrar un pago manual cuando el alumno pagó sin subir comprobante; las entregas de Classroom ya se ven con sus archivos; hay una vista Mis materiales por tema; y la guía aparece sola una vez al día." },
-  { date: "2026-11-26", audience: "ambos", title: "Datos de pago de tu maestro en el portal", text: "Cada maestro registra sus datos bancarios (banco, titular, tarjeta y CLABE) en el portal; sus alumnos los copian desde su curso, en Datos para pagar, para pagar por transferencia sin salir del portal." },
-  { date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
-  { date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
-  { date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
-  { date: "2026-11-26", audience: "ambos", title: "Pregunta a tu maestro desde el portal", text: "Puedes escribirle una pregunta a tu maestro desde tu curso y ver su respuesta ahí mismo; tu maestro las responde desde Mis alumnos." },
-  { date: "2026-11-26", audience: "ambos", title: "Paga por transferencia y sube tu comprobante", text: "Elige las semanas que pagas, el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027) y sube la foto de tu comprobante; tu maestro lo confirma." },
-  { date: "2026-11-26", audience: "ambos", title: "Tus tareas y calificaciones en el portal", text: "En Mis tareas ves tus tareas de Classroom, si ya las entregaste y tu calificación, aunque tu nombre en Classroom sea distinto: se vinculan por tu correo." },
-  { date: "2026-11-26", audience: "maestros", title: "Confirmar antes de vincular una cuenta", text: "Al vincular la cuenta de un alumno, el portal te pide confirmar el correo y el curso antes de hacerlo." },
-  { date: "2026-11-26", audience: "maestros", title: "Desvincular la cuenta de un alumno", text: "Si un alumno ya no debe ver un curso, puedes desvincular su cuenta desde su ficha; su cuenta sigue existiendo para sus otros cursos." },
-  { date: "2026-11-26", audience: "maestros", title: "Eliminar el evento de Meet de una clase", text: "En Mis clases puedes eliminar el evento de Meet: se borra de tu calendario de Google y los alumnos dejan de ver el enlace." },
-  { date: "2026-11-26", audience: "ambos", title: "Los botones ya se ven como botones", text: "Entrar a Meet, Entrar a la clase y Ver comprobante ahora se ven como botones dorados, no como enlaces de texto." },
-  { date: "2026-11-26", audience: "ambos", title: "Si te rechazan un comprobante, puedes reenviarlo", text: "Un comprobante rechazado se puede volver a enviar; si se envía 3 veces en el mismo día, queda bloqueado hasta el día siguiente. Uno pagado o en revisión no se puede volver a usar." },
-  { date: "2026-11-26", audience: "ambos", title: "Tus tareas se vinculan por tu correo", text: "Aunque tu nombre en Classroom sea distinto al del portal, tus tareas y calificaciones se encuentran por tu correo electrónico (Classroom) de tu ficha." }
+  { id: "vista-administrador-pagos-manuales", date: "2026-11-26", audience: "ambos", title: "Tu vista de administrador, pagos manuales y más", text: "El administrador ya ve solo lo suyo y tiene una pestaña Vista administrador con todo lo de la escuela; el maestro puede registrar un pago manual cuando el alumno pagó sin subir comprobante; las entregas de Classroom ya se ven con sus archivos; hay una vista Mis materiales por tema; y la guía aparece sola cuando hay algo nuevo." },
+  { id: "datos-pago-maestro", date: "2026-11-26", audience: "ambos", title: "Datos de pago de tu maestro en el portal", text: "Cada maestro registra sus datos bancarios (banco, titular, tarjeta y CLABE) en el portal; sus alumnos los copian desde su curso, en Datos para pagar, para pagar por transferencia sin salir del portal." },
+  { id: "material-desde-ingreso", date: "2026-11-26", audience: "ambos", title: "El material se muestra desde que entraste al curso", text: "Cada alumno ve el material desde la materia en la que entró al curso, hacia adelante: lo de antes ya no aparece y lo nuevo va apareciendo conforme se publica." },
+  { id: "material-por-semana-maestro", date: "2026-11-26", audience: "maestros", title: "Ve el material por semana de tu clase", text: "En tus clases pulsa Ver material: ves el mismo material por semana que ven tus alumnos, ordenado por tema desde Classroom." },
+  { id: "material-por-semana", date: "2026-11-26", audience: "ambos", title: "Material de clase por semana", text: "El material de cada curso ahora se ordena por semana, con su guía, video o presentación, y el temario general." },
+  { id: "preguntar-al-maestro", date: "2026-11-26", audience: "ambos", title: "Pregunta a tu maestro desde el portal", text: "Puedes escribirle una pregunta a tu maestro desde tu curso y ver su respuesta ahí mismo; tu maestro las responde desde Mis alumnos." },
+  { id: "pago-transferencia-comprobante", date: "2026-11-26", audience: "ambos", title: "Paga por transferencia y sube tu comprobante", text: "Elige las semanas que pagas, el portal calcula el total ($90 por semana en 2026, $100 desde enero de 2027) y sube la foto de tu comprobante; tu maestro lo confirma." },
+  { id: "tareas-calificaciones", date: "2026-11-26", audience: "ambos", title: "Tus tareas y calificaciones en el portal", text: "En Mis tareas ves tus tareas de Classroom, si ya las entregaste y tu calificación, aunque tu nombre en Classroom sea distinto: se vinculan por tu correo." },
+  { id: "confirmar-vincular-cuenta", date: "2026-11-26", audience: "maestros", title: "Confirmar antes de vincular una cuenta", text: "Al vincular la cuenta de un alumno, el portal te pide confirmar el correo y el curso antes de hacerlo." },
+  { id: "desvincular-cuenta-alumno", date: "2026-11-26", audience: "maestros", title: "Desvincular la cuenta de un alumno", text: "Si un alumno ya no debe ver un curso, puedes desvincular su cuenta desde su ficha; su cuenta sigue existiendo para sus otros cursos." },
+  { id: "eliminar-evento-meet", date: "2026-11-26", audience: "maestros", title: "Eliminar el evento de Meet de una clase", text: "En Mis clases puedes eliminar el evento de Meet: se borra de tu calendario de Google y los alumnos dejan de ver el enlace." },
+  { id: "botones-dorados", date: "2026-11-26", audience: "ambos", title: "Los botones ya se ven como botones", text: "Entrar a Meet, Entrar a la clase y Ver comprobante ahora se ven como botones dorados, no como enlaces de texto." },
+  { id: "reenviar-comprobante-rechazado", date: "2026-11-26", audience: "ambos", title: "Si te rechazan un comprobante, puedes reenviarlo", text: "Un comprobante rechazado se puede volver a enviar; si se envía 3 veces en el mismo día, queda bloqueado hasta el día siguiente. Uno pagado o en revisión no se puede volver a usar." },
+  { id: "tareas-por-correo", date: "2026-11-26", audience: "ambos", title: "Tus tareas se vinculan por tu correo", text: "Aunque tu nombre en Classroom sea distinto al del portal, tus tareas y calificaciones se encuentran por tu correo electrónico (Classroom) de tu ficha." },
+  { id: "avisos-multi-curso", date: "2026-11-27", audience: "maestros", title: "Avisos a varios cursos a la vez", text: "Ahora puedes publicar un aviso en varios cursos a la vez: marca las casillas de los cursos o 'Todos los cursos'. Cada curso recibe su copia, firmada por su maestro." }
 ];
 // Fecha "YYYY-MM-DD" a ms (inicio del día local). 0 si no se puede leer.
 function newsDateMs(dateStr) {
@@ -772,8 +884,9 @@ function newsItemHtml(n, nowMs) {
 }
 // ---------- Guía "Primeros pasos" ----------
 // Contenido en el código (no editable desde el portal): cada vez que se
-// agrega una función, se agrega su paso aquí. Se muestra sola una vez al día
-// (la marca es la fecha en localStorage) y queda siempre en el menú
+// agrega una función, se agrega su paso aquí. Se muestra sola solo
+// cuando hay novedades nuevas (la lista de ids vistos vive en
+// localStorage, por portal y por usuario) y queda siempre en el menú
 // ("Guía") y en Inicio.
 const GUIDE_KEY_MAESTROS = "gecatechGuideSeenMaestros";
 const GUIDE_STEPS_MAESTROS = [
@@ -782,7 +895,7 @@ const GUIDE_STEPS_MAESTROS = [
   { title: "Da de alta a tus alumnos", text: "En Mis alumnos pulsa Dar de alta y escribe sus datos; el portal ya te pone el siguiente ID (GEC-…) en automático, solo confírmalo al guardar. El correo de Classroom sirve para vincular sus tareas aunque su nombre en Classroom sea distinto.", goto: "alumnos" },
   { title: "Vincula la cuenta de un alumno", text: "En la ficha del alumno pulsa Vincular cuenta existente y confirma el correo y el curso: así entra a su portal y ve todos sus cursos con un solo inicio de sesión. Si te equivocas, puedes desvincularla desde la misma ficha.", goto: "alumnos" },
   { title: "Revisa preguntas y comprobantes", text: "En Mis alumnos están las preguntas de tus alumnos (respóndelas ahí) y los comprobantes por revisar: confirma cada pago con tu estado de cuenta. En Inicio ves cuántos hay pendientes. Captura tus datos para recibir pagos en Mi cuenta (Mis datos para recibir pagos): banco, titular, número de tarjeta y CLABE; tus alumnos los copian desde su portal para pagarte. Si un alumno te pagó sin subir comprobante, regístralo tú desde su ficha, en Pagos.", goto: "alumnos" },
-  { title: "Publica avisos", text: "En Avisos escribe avisos para tus alumnos por curso: ellos los ven en su portal.", goto: "avisos" },
+  { title: "Publica avisos", text: "En Avisos escribe un aviso y publícalo en uno o en varios cursos a la vez (o en todos): los alumnos de cada curso lo ven en su portal.", goto: "avisos" },
   { title: "Revisa las novedades del portal", text: "En Avisos, abajo, están las Novedades del portal: lo nuevo de cada versión, como el material por semana, Mis pagos y las tareas.", goto: "avisos", scroll: "news-block" }
 ];
 function guideGotoLabel(tab) {
@@ -795,7 +908,7 @@ function renderGuide() {
   const s = $("section");
   s.innerHTML = `
   <div class="card"><h2>Guía: primeros pasos</h2>
-    <p class="hint">Qué hacer primero al entrar al portal y cómo usar cada función, en orden. Esta guía aparece sola una vez al día; vuelve aquí cuando quieras.</p>
+    <p class="hint">Qué hacer primero al entrar al portal y cómo usar cada función, en orden. Esta guía aparece sola cuando hay algo nuevo; vuelve aquí cuando quieras.</p>
     ${guideStepsHtml(GUIDE_STEPS_MAESTROS, true)}
   </div>`;
   wireGuideButtons(s);
@@ -810,26 +923,72 @@ function wireGuideButtons(root) {
     enterApp();
   }));
 }
-// Una vez al día: la guía se abre sola encima de la sección, con un botón
-// para cerrarla. La marca es la fecha local (AAAA-MM-DD) y vive en
-// localStorage de este navegador.
-function guideToday() {
-  const d = new Date();
-  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+// La guía se abre sola solo cuando hay novedades nuevas para este
+// usuario, no por fecha: cada entrada de PORTAL_NEWS tiene un id
+// estable y se guarda la lista de ids ya vistos en localStorage, en
+// una clave por portal y por usuario (dos cuentas en el mismo
+// navegador no se mezclan; maestros y alumnos tampoco, aunque
+// compartan dominio). Abrir la guía a mano no marca nada como visto;
+// cerrarla sin pulsar "Entendido, empezar" o un botón "Ir a …"
+// tampoco: vuelve a aparecer en la siguiente entrada.
+// Los ids de PORTAL_NEWS no se reutilizan ni se cambian nunca: una
+// entrada futura lleva su propio id único.
+function guideSeenIdsKey() {
+  return "gecatechGuideSeenIdsMaestros:" + (me && me.uid ? me.uid : "anon");
 }
-function guideSeenMaestros() {
-  try { return localStorage.getItem(GUIDE_KEY_MAESTROS) === guideToday(); } catch (e) { return true; }
+// Lista de ids vistos (null si nunca se guardó nada en este navegador).
+function readGuideSeenIds() {
+  try {
+    const raw = localStorage.getItem(guideSeenIdsKey());
+    if (raw == null) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(id => typeof id === "string" && id);
+  } catch (e) { return null; }
 }
+// Novedades visibles en este portal (audiencia "maestros" o "ambos"),
+// en el orden del arreglo. Sin id no se puede seguir una entrada, así
+// que las entradas sin id no disparan la guía.
+function guideVisibleNews() {
+  return (PORTAL_NEWS || []).filter(n => n && n.id && (n.audience === "maestros" || n.audience === "ambos"));
+}
+function guideVisibleIds() {
+  return guideVisibleNews().map(n => n.id);
+}
+// Marca como vistos TODOS los ids visibles para esta audiencia (no
+// solo los nuevos): es lo que se guarda al pulsar "Entendido,
+// empezar" o un botón "Ir a …".
 function markGuideSeenMaestros() {
-  try { localStorage.setItem(GUIDE_KEY_MAESTROS, guideToday()); } catch (e) {}
+  try { localStorage.setItem(guideSeenIdsKey(), JSON.stringify(guideVisibleIds())); } catch (e) {}
 }
-function showGuideOverlay() {
+// Novedades pendientes y si es la primera entrada de este usuario.
+// - Con clave nueva: pendientes = visibles cuyo id no está en la lista.
+// - Sin clave nueva pero con la clave vieja (fecha): el usuario ya vio
+//   la guía antes del cambio; se siembra la clave nueva con los ids
+//   actuales SIN mostrar la guía.
+// - Sin ninguna clave: primera entrada; se muestra la guía una vez.
+function guidePendingNews() {
+  try {
+    const seen = readGuideSeenIds();
+    if (seen !== null) {
+      const set = new Set(seen);
+      return { unseen: guideVisibleNews().filter(n => !set.has(n.id)), firstVisit: false };
+    }
+    if (localStorage.getItem(GUIDE_KEY_MAESTROS) != null) {
+      markGuideSeenMaestros();
+      return { unseen: [], firstVisit: false };
+    }
+    return { unseen: guideVisibleNews(), firstVisit: true };
+  } catch (e) { return { unseen: [], firstVisit: false }; }
+}
+function showGuideOverlay(unseen) {
   if ($("guide-overlay")) return;
   const ov = document.createElement("div");
   ov.className = "guide-overlay";
   ov.id = "guide-overlay";
   ov.innerHTML = `<div class="card"><h2>Guía: primeros pasos</h2>
     <p class="hint">Bienvenido/a al portal de maestros. Esto es lo primero que debes hacer, en orden:</p>
+    ${unseen && unseen.length ? `<div><h3>Lo nuevo</h3><p class="hint">Esto es lo nuevo desde tu última visita:</p><ul>${unseen.map(n => `<li><strong>${esc(n.title || "Novedad")}</strong></li>`).join("")}</ul></div>` : ""}
     ${guideStepsHtml(GUIDE_STEPS_MAESTROS, true)}
     <div style="margin-top:16px"><button class="gold" type="button" id="btn-guide-ok">Entendido, empezar</button></div>
   </div>`;
@@ -839,6 +998,59 @@ function showGuideOverlay() {
 }
 function closeGuideOverlay() {
   const ov = $("guide-overlay");
+  if (ov) ov.remove();
+}
+// Aviso de inactividad: ventana en la página (no confirm() nativo, que
+// no puede mostrar cuenta regresiva y el navegador automatizado lo
+// descarta solo). Reutiliza el patrón de la guía (.guide-overlay).
+// La cuenta regresiva muestra el tiempo real que falta para el cierre
+// (empieza en 5:00 si el aviso sale a los 25 min, o menos si se vuelve
+// a la pestaña entre los 25 y los 30 min), en formato M:SS.
+function idleWarnRemainingMs() {
+  return Math.max(0, idleWarnDeadline - Date.now());
+}
+function updateIdleWarningCountdown() {
+  const el = $("idle-countdown");
+  if (!el) return;
+  const s = Math.ceil(idleWarnRemainingMs() / 1000);
+  el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+function showIdleWarning() {
+  if (!idleArmed) return;
+  if ($("idle-warning-overlay")) { updateIdleWarningCountdown(); return; }
+  // Si la guía está abierta, el usuario está activo: el aviso no se
+  // muestra hasta que la guía se cierre (cerrarla renueva los
+  // temporizadores).
+  if ($("guide-overlay")) return;
+  const remaining = idleRemainingMs();
+  if (remaining <= 0) { closeIdleSession(); return; }
+  idleWarnDeadline = Date.now() + remaining;
+  const ov = document.createElement("div");
+  ov.className = "guide-overlay";
+  ov.id = "idle-warning-overlay";
+  ov.style.zIndex = "3000";
+  ov.innerHTML = `<div class="card"><h2>¿Sigues ahí?</h2>
+    <p class="hint">Tu sesión se cerrará por inactividad, por seguridad.</p>
+    <p id="idle-countdown" style="font-size:32px;font-weight:900;text-align:center;margin:8px 0"></p>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap"><button class="gold" type="button" id="btn-idle-stay">Seguir trabajando</button><button class="ghost" type="button" id="btn-idle-close">Cerrar sesión ahora</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  $("btn-idle-stay").addEventListener("click", () => {
+    hideIdleWarning();
+    resetIdleTimer();
+    refreshAuthToken();
+  });
+  $("btn-idle-close").addEventListener("click", () => closeIdleSession());
+  updateIdleWarningCountdown();
+  if (idleWarnCountdown) clearInterval(idleWarnCountdown);
+  idleWarnCountdown = setInterval(() => {
+    if (!idleArmed || idleWarnRemainingMs() <= 0) { hideIdleWarning(); closeIdleSession(); return; }
+    updateIdleWarningCountdown();
+  }, 1000);
+}
+function hideIdleWarning() {
+  if (idleWarnCountdown) { clearInterval(idleWarnCountdown); idleWarnCountdown = null; }
+  const ov = $("idle-warning-overlay");
   if (ov) ov.remove();
 }
 // ---------- Inicio (resumen) · v10 ----------
@@ -1166,31 +1378,196 @@ async function renderClasses() {
 }
 
 // ---------- Avisos: publicar + historial (por curso) · v10 ----------
-let avCourse = "";
+// ---------- Avisos a varios cursos ----------
+// Un aviso a varios cursos son N documentos en `announcements` (uno por
+// curso) con el mismo groupId. La publicación usa un WriteBatch: es
+// atómica (o se publican todos o ninguno, sin copias sueltas si se va la
+// conexión) y cada copia se firma con el maestro de SU curso. El portal
+// de alumnos no cambia: cada curso muestra su propia copia, sin duplicar
+// dentro de una misma tarjeta. Los avisos viejos no tienen groupId y se
+// borran solos, como antes.
 let avTeacher = "";
+let avSelected = []; // cursos marcados en el formulario de Avisos (publicar + historial)
+let avHistoryGen = 0; // generación del historial: un render tardío no pisa uno nuevo
+// Cursos a los que puedo publicar avisos: todos si veo toda la escuela
+// (admin/gestora), solo los míos si soy maestro/a. "Todos" = estos, no
+// toda la escuela.
+function avPublishableCourseIds() {
+  return seeAll() ? Object.keys(courses) : (me.courses || []);
+}
+function avCourseName(cid) { return (courses[cid] && courses[cid].name) || cid; }
+// Firma de la copia de un curso: el maestro elegido si da ese curso; si
+// no, el primer maestro de ese curso; si el curso no tiene maestro, el
+// publicador.
+function avSignerForCourse(courseId, teachers, chosen, publisher) {
+  if (chosen && (chosen.courses || []).includes(courseId)) return chosen;
+  const first = (teachers || []).find(t => (t.courses || []).includes(courseId));
+  if (first) return first;
+  return publisher;
+}
+function newAnnouncementGroupId() { return db.collection("announcements").doc().id; }
+// Publica el mismo aviso en varios cursos (un documento por curso, mismo
+// groupId, en un solo batch atómico). Devuelve { groupId, count }.
+async function publishMultiCourseAnnouncement(opts) {
+  const ids = (opts.courseIds || []).filter(Boolean);
+  const title = opts.title;
+  const text = opts.text;
+  if (!ids.length) throw new Error("Elige al menos un curso.");
+  if (!title || !text) throw new Error("Escribe el título y el mensaje del aviso.");
+  const groupId = newAnnouncementGroupId();
+  const batch = db.batch();
+  ids.forEach(cid => {
+    const signer = avSignerForCourse(cid, opts.teachers, opts.chosenTeacher, opts.publisher);
+    batch.set(db.collection("announcements").doc(), { courseId: cid, teacherId: signer.uid, teacherName: signer.name, title, text, createdAt: firebase.firestore.FieldValue.serverTimestamp(), active: true, groupId, courseCount: ids.length });
+  });
+  await batch.commit();
+  return { groupId, count: ids.length };
+}
+async function fetchAnnouncementGroup(groupId) {
+  // Sin orderBy (igual que fetchAnnouncements): no necesita índice.
+  const snap = await db.collection("announcements").where("groupId", "==", groupId).limit(20).get();
+  const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+  return out;
+}
+// groupId -> [courseIds del grupo] (para la insignia "También en: …").
+async function avGroupCourseIdsFor(list) {
+  const gids = [...new Set((list || []).map(a => a.groupId).filter(Boolean))];
+  const out = {};
+  await Promise.all(gids.map(async gid => {
+    const copies = await fetchAnnouncementGroup(gid).catch(() => []);
+    out[gid] = copies.map(c => c.courseId);
+  }));
+  return out;
+}
+// Una línea del historial: título, fecha, firma e insignia con los otros
+// cursos del grupo (si los hay). data-del-group lleva el groupId para el
+// borrado con alcance.
+function announcementItemHtml(a, otherCourseNames) {
+  const canDel = isAdmin || isManager || a.teacherId === me.uid;
+  const badge = (otherCourseNames && otherCourseNames.length)
+    ? ` <span class="muted">También en: ${esc(otherCourseNames.join(", "))}</span>` : "";
+  return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span>${badge}<br>${esc(a.text || "")}</div>${canDel ? `<button class="small ghost" data-del-av="${a.id}" data-del-group="${a.groupId || ""}" style="color:var(--err)">Eliminar</button>` : ""}</div>`;
+}
+// Borra un aviso con alcance: "one" = solo esta copia; "all" = todas las
+// copias del grupo (batch). Sin groupId, "all" borra solo esa copia.
+async function deleteAnnouncementScope(a, scope) {
+  if (scope === "all" && a.groupId) {
+    const copies = await fetchAnnouncementGroup(a.groupId);
+    const batch = db.batch();
+    copies.forEach(c => batch.delete(db.collection("announcements").doc(c.id)));
+    await batch.commit();
+    return copies.length;
+  }
+  await db.collection("announcements").doc(a.id).delete();
+  return 1;
+}
+// Ventana en la página para elegir el alcance del borrado (NO confirm()
+// nativo: el navegador automatizado lo descarta solo). Reutiliza el
+// patrón de la guía (.guide-overlay).
+function askDeleteAnnouncement(a, onDone) {
+  if ($("del-av-overlay")) return;
+  const hasGroup = !!a.groupId;
+  const ov = document.createElement("div");
+  ov.className = "guide-overlay";
+  ov.id = "del-av-overlay";
+  ov.innerHTML = `<div class="card"><h2>Eliminar aviso</h2>
+    <p class="hint">${hasGroup ? "Este aviso se publicó en varios cursos. ¿Dónde lo quieres quitar? Los alumnos dejarán de verlo." : "¿Eliminar este aviso? Los alumnos dejarán de verlo."}</p>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="gold" type="button" id="btn-del-av-one">${hasGroup ? "Solo este curso" : "Eliminar aviso"}</button>
+      ${hasGroup ? `<button class="gold" type="button" id="btn-del-av-all">En todos los cursos</button>` : ""}
+      <button class="ghost" type="button" id="btn-del-av-cancel">Cancelar</button>
+    </div>
+    <div id="del-av-err" class="err"></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  $("btn-del-av-cancel").addEventListener("click", close);
+  $("btn-del-av-one").addEventListener("click", async () => {
+    try { await deleteAnnouncementScope(a, "one"); close(); if (onDone) onDone(); }
+    catch (e) { showErr($("del-av-err"), "No se pudo eliminar: " + (e.message || e)); }
+  });
+  const btnAll = $("btn-del-av-all");
+  if (btnAll) btnAll.addEventListener("click", async () => {
+    try { await deleteAnnouncementScope(a, "all"); close(); if (onDone) onDone(); }
+    catch (e) { showErr($("del-av-err"), "No se pudo eliminar: " + (e.message || e)); }
+  });
+}
+// Engancha los botones Eliminar del historial a la ventana de alcance.
+function bindAvDeleteButtons(scope, onDone) {
+  scope.querySelectorAll("[data-del-av]").forEach(b => b.addEventListener("click", () => {
+    askDeleteAnnouncement({ id: b.getAttribute("data-del-av"), groupId: b.getAttribute("data-del-group") || "" }, onDone);
+  }));
+}
+// Cablea casillas por curso + "Todos" sin re-renderizar el formulario
+// (para no borrar el borrador de título/mensaje). onChange recibe la
+// selección nueva. Devuelve { getSelected }.
+function wireAvCourseCheckboxes(root, allCbId, itemSelector, courseIds, initialSelected, onChange) {
+  let selected = (initialSelected || []).filter(id => courseIds.includes(id));
+  const sync = () => {
+    root.querySelectorAll(itemSelector).forEach(cb => { cb.checked = selected.includes(cb.value); });
+    const all = $(allCbId);
+    if (all) all.checked = courseIds.length > 0 && courseIds.every(id => selected.includes(id));
+  };
+  const allCb = $(allCbId);
+  if (allCb) allCb.addEventListener("change", () => {
+    selected = allCb.checked ? [...courseIds] : [];
+    sync();
+    if (onChange) onChange([...selected]);
+  });
+  root.querySelectorAll(itemSelector).forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) { if (!selected.includes(cb.value)) selected.push(cb.value); }
+    else selected = selected.filter(id => id !== cb.value);
+    sync();
+    if (onChange) onChange([...selected]);
+  }));
+  sync();
+  return { getSelected: () => [...selected] };
+}
+// Historial de los cursos marcados, agrupado por curso, con insignia
+// "También en: …" en las copias de un grupo.
+async function renderAvHistory() {
+  const box = $("av-history");
+  if (!box) return;
+  const gen = ++avHistoryGen;
+  const ids = [...avSelected];
+  if (!ids.length) { box.innerHTML = `<p class="muted">Marca al menos un curso para ver su historial.</p>`; return; }
+  box.innerHTML = `<p class="muted">Cargando avisos…</p>`;
+  const lists = await Promise.allSettled(ids.map(cid => fetchAnnouncements(cid)));
+  if (gen !== avHistoryGen) return;
+  const flat = [];
+  lists.forEach(r => { if (r.status === "fulfilled") (r.value || []).forEach(a => flat.push(a)); });
+  const groupCourses = await avGroupCourseIdsFor(flat).catch(() => ({}));
+  if (gen !== avHistoryGen) return;
+  box.innerHTML = ids.map((cid, i) => {
+    const list = lists[i].status === "fulfilled" ? (lists[i].value || []) : [];
+    const items = list.map(a => {
+      const others = (groupCourses[a.groupId] || []).filter(x => x !== cid).map(avCourseName);
+      return announcementItemHtml(a, others);
+    }).join("");
+    return `<h3 style="margin-top:14px">${esc(avCourseName(cid))}</h3>` + (items || `<p class="muted">Aún no hay avisos para este curso.</p>`);
+  }).join("");
+  bindAvDeleteButtons(box, () => renderAvisos());
+}
 async function renderAvisos() {
   const s = $("section");
-  const myCourseIds = seeAll() ? Object.keys(courses) : (me.courses || []);
-  if (!avCourse || !myCourseIds.includes(avCourse)) avCourse = myCourseIds[0] || "";
+  const myCourseIds = avPublishableCourseIds();
+  if (!avSelected.length || !avSelected.every(id => myCourseIds.includes(id))) avSelected = myCourseIds.length ? [myCourseIds[0]] : [];
   let teachers = [];
   if (seeAll()) {
-    teachers = (await listTeachers()).filter(t => (t.courses || []).includes(avCourse));
+    teachers = await listTeachers();
     if (!avTeacher || !teachers.some(t => t.uid === avTeacher)) avTeacher = teachers[0] ? teachers[0].uid : "";
   } else {
     avTeacher = me.uid;
   }
-  const teacherObj = seeAll() ? teachers.find(t => t.uid === avTeacher) : me;
-  const announcements = avCourse ? await fetchAnnouncements(avCourse) : [];
-  const courseOptions = myCourseIds.map(id => `<option value="${id}"${id === avCourse ? " selected" : ""}>${esc(courses[id] ? courses[id].name : id)}</option>`).join("");
   const teacherOptions = seeAll() ? teachers.map(t => `<option value="${t.uid}"${t.uid === avTeacher ? " selected" : ""}>${esc(t.name)}</option>`).join("") : "";
   s.innerHTML = `
   <div class="card"><h2>Avisos</h2>
-    <p class="hint">Publica avisos para un curso: los alumnos de ese curso los ven en su portal. Abajo queda el historial.</p>
-    <div class="row">
-      <div><label>Curso</label><select id="av-course">${courseOptions}</select></div>
-      ${seeAll() ? `<div><label>Maestro/a</label><select id="av-teacher">${teacherOptions}</select></div>` : ""}
+    <p class="hint">Publica un aviso en uno o en varios cursos a la vez: los alumnos de cada curso lo ven en su portal. Abajo queda el historial por curso.</p>
+    ${seeAll() ? `<div class="row"><div><label>Maestro/a</label><select id="av-teacher">${teacherOptions}</select></div></div>` : ""}
+    <div style="margin-top:8px"><label>Cursos</label>
+      <div><label style="font-weight:600"><input type="checkbox" id="av-all"> Todos los cursos</label></div>
+      ${myCourseIds.map(id => `<div><label><input type="checkbox" class="av-course-cb" value="${id}"${avSelected.includes(id) ? " checked" : ""}> ${esc(avCourseName(id))}</label></div>`).join("") || `<p class="muted">No tienes cursos asignados.</p>`}
     </div>
-    ${announcements.map(a => `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span><br>${esc(a.text || "")}</div>${(isAdmin || isManager || a.teacherId === me.uid) ? `<button class="small ghost" data-del-av="${a.id}" style="color:var(--err)">Eliminar</button>` : ""}</div>`).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
     <div class="row" style="margin-top:12px">
       <div><label>Título</label><input id="av-title" placeholder="Ej. Cambio de horario"></div>
     </div>
@@ -1199,6 +1576,7 @@ async function renderAvisos() {
     </div>
     <div style="margin-top:10px"><button id="btn-publish-av" class="gold">Publicar aviso</button></div>
     <div id="av-msg" class="okmsg"></div><div id="av-err" class="err"></div>
+    <div id="av-history" style="margin-top:14px"><p class="muted">Cargando avisos…</p></div>
   </div>
   <div class="card" id="news-block"><h2>Novedades del portal</h2>
     <p class="hint">Lo nuevo del portal, sin que tengas que buscarlo: cada versión trae sus novedades aquí, de la más reciente a la más antigua.</p>
@@ -1207,32 +1585,29 @@ async function renderAvisos() {
   // Si se llegó desde Inicio ("Ver todas las novedades"), se baja directo
   // al bloque de novedades.
   if (scrollToAfterNav === "news-block") { scrollToAfterNav = ""; const nb = $("news-block"); if (nb) nb.scrollIntoView({ behavior: "auto", block: "start" }); }
-  const avCourseSel = $("av-course");
-  if (avCourseSel) avCourseSel.addEventListener("change", (e) => { avCourse = e.target.value; avTeacher = ""; renderAvisos(); });
   const avTeacherSel = $("av-teacher");
-  if (avTeacherSel) avTeacherSel.addEventListener("change", (e) => { avTeacher = e.target.value; renderAvisos(); });
+  // Sin re-render: la lista de maestros ya no depende del curso y el
+  // historial tampoco; re-renderizar borraría el borrador de título/mensaje.
+  if (avTeacherSel) avTeacherSel.addEventListener("change", (e) => { avTeacher = e.target.value; });
+  wireAvCourseCheckboxes(s, "av-all", ".av-course-cb", myCourseIds, avSelected, (sel) => { avSelected = sel; renderAvHistory(); });
   const btnPublishAv = $("btn-publish-av");
   if (btnPublishAv) btnPublishAv.addEventListener("click", async () => {
     const title = $("av-title").value.trim();
     const text = $("av-text").value.trim();
     showErr($("av-err"), ""); showOk($("av-msg"), "");
     if (!title || !text) { showErr($("av-err"), "Escribe el título y el mensaje del aviso."); return; }
-    if (!teacherObj) { showErr($("av-err"), "Elige un maestro primero."); return; }
+    if (!avSelected.length) { showErr($("av-err"), "Elige al menos un curso."); return; }
+    const chosenNow = seeAll() ? teachers.find(t => t.uid === avTeacher) : me;
+    if (seeAll() && teachers.length && !chosenNow) { showErr($("av-err"), "Elige un maestro primero."); return; }
     btnPublishAv.disabled = true;
     try {
-      await db.collection("announcements").add({ courseId: avCourse, teacherId: teacherObj.uid, teacherName: teacherObj.name, title, text, createdAt: firebase.firestore.FieldValue.serverTimestamp(), active: true });
+      const res = await publishMultiCourseAnnouncement({ courseIds: avSelected, title, text, chosenTeacher: chosenNow, teachers: seeAll() ? teachers : [me], publisher: me });
       await renderAvisos();
-      showOk($("av-msg"), "Aviso publicado.");
+      showOk($("av-msg"), "Aviso publicado en " + res.count + (res.count === 1 ? " curso." : " cursos."));
     } catch (e) { showErr($("av-err"), "No se pudo publicar: " + (e.message || e)); }
     finally { btnPublishAv.disabled = false; }
   });
-  s.querySelectorAll("[data-del-av]").forEach(b => b.addEventListener("click", async () => {
-    if (!confirm("¿Eliminar este aviso? Los alumnos dejarán de verlo.")) return;
-    try {
-      await db.collection("announcements").doc(b.getAttribute("data-del-av")).delete();
-      renderAvisos();
-    } catch (e) { showErr($("av-err"), "No se pudo eliminar: " + (e.message || e)); }
-  }));
+  renderAvHistory();
 }
 
 // ---------- Google Classroom (API oficial: lectura y escritura) ----------
@@ -3044,6 +3419,9 @@ async function renderCalendar() {
 async function renderCourses() {
   const s = $("section");
   const diplomas = await fetchDiplomas();
+  const teachersList = await listTeachers(); // todos los maestros activos, den o no den cursos
+  const editingDiploma = editingDiplomaId ? diplomas.find(d => d.id === editingDiplomaId) : null;
+  const teacherOptions = `<option value="">Sin asignar</option>` + teachersList.map(t => `<option value="${t.uid}"${editingDiploma && editingDiploma.teacherId === t.uid ? " selected" : ""}>${esc(t.name)}</option>`).join("");
   let rows = Object.entries(courses).map(([id, c]) => `
     <tr><td>${esc(c.name)}</td><td>${esc(c.schedule || "")}</td>
     <td><input type="date" value="${esc(c.startDate || "")}" data-course="${id}" data-field="startDate" style="max-width:170px"></td>
@@ -3064,11 +3442,35 @@ async function renderCourses() {
   </div>
   <div class="card"><h2>Diplomados</h2>
     <p class="hint">Estos diplomados se pueden asignar a cada alumno en su ficha. El alumno solo los ve en su portal cuando activas "Mostrar a los alumnos" en su curso.</p>
-    ${diplomas.map(dp => `<div class="docline"><span>${esc(dp.name)}</span><button class="small ghost" data-del-diploma="${dp.id}" style="color:var(--err)">Eliminar</button></div>`).join("") || `<p class="muted">Aún no hay diplomados registrados.</p>`}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <input id="diploma-name" placeholder="Nombre del diplomado" style="flex:2;min-width:220px">
-      <button class="gold" id="btn-add-diploma">Agregar diplomado</button>
+    <p class="hint"><strong>Diplomados de pago:</strong> aquí también configuras los diplomados que se venden por separado: su maestro, precios y clases. El maestro del diplomado los gestiona en su pestaña "Diplomados". Los precios y las clases se pueden llenar después, cuando los tengas.</p>
+    ${diplomas.map(dp => {
+      const nClasses = Array.isArray(dp.classes) ? dp.classes.length : 0;
+      const configured = dp.teacherId || dp.priceFull || dp.priceWeekly || dp.priceHalf || dp.totalClasses || nClasses;
+      return `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(dp.name)}</strong><br><span class="muted">${dp.teacherName ? "Maestro/a: " + esc(dp.teacherName) : "Sin maestro asignado"}${dp.priceFull ? " · Completo: $" + esc(dp.priceFull) : ""}${dp.priceWeekly ? " · Por semana: $" + esc(dp.priceWeekly) : ""}${dp.priceHalf ? " · Mitad: $" + esc(dp.priceHalf) : ""}${dp.totalClasses ? " · " + esc(dp.totalClasses) + " clases" : ""} · ${nClasses} enlace(s) de clase</span>${configured ? "" : "<br><span class=\"muted\">Sin configurar (sin maestro, precios ni clases).</span>"}</div><button class="small" data-edit-diploma="${dp.id}">Editar</button> <button class="small ghost" data-del-diploma="${dp.id}" style="color:var(--err)">Eliminar</button></div>`;
+    }).join("") || `<p class="muted">Aún no hay diplomados registrados.</p>`}
+    <h3 style="margin-top:16px">${editingDiploma ? "Editar diplomado" : "Agregar diplomado"}</h3>
+    <div class="row">
+      <div><label>Nombre del diplomado</label><input id="diploma-name" placeholder="Ej. Diplomado en..." value="${editingDiploma ? esc(editingDiploma.name || "") : ""}"></div>
+      <div><label>Maestro/a del diplomado</label><select id="diploma-teacher">${teacherOptions}</select></div>
     </div>
+    <div class="row">
+      <div><label>Precio completo (MXN)</label><input id="diploma-price-full" type="number" min="0" step="1" placeholder="Ej. 1500" value="${editingDiploma && editingDiploma.priceFull ? esc(editingDiploma.priceFull) : ""}"></div>
+      <div><label>Precio por semana (MXN)</label><input id="diploma-price-weekly" type="number" min="0" step="1" placeholder="Ej. 150" value="${editingDiploma && editingDiploma.priceWeekly ? esc(editingDiploma.priceWeekly) : ""}"></div>
+      <div><label>Precio mitad de curso (MXN)</label><input id="diploma-price-half" type="number" min="0" step="1" placeholder="Ej. 750" value="${editingDiploma && editingDiploma.priceHalf ? esc(editingDiploma.priceHalf) : ""}"></div>
+      <div><label>Total de clases / semanas</label><input id="diploma-total-classes" type="number" min="0" step="1" placeholder="Ej. 12" value="${editingDiploma && editingDiploma.totalClasses ? esc(editingDiploma.totalClasses) : ""}"></div>
+    </div>
+    <div style="margin-top:12px"><h3>Clases del diplomado (enlaces)</h3>
+      <p class="hint">El alumno solo ve las clases que ya pagó. Agrega los enlaces en orden (clase 1, 2, 3…).</p>
+      <div id="dp-classes-list"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <input id="dp-class-title" placeholder="Título de la clase" style="flex:2;min-width:220px">
+        <input id="dp-class-url" type="url" placeholder="Enlace de la clase" style="flex:2;min-width:220px">
+        <button class="gold" id="btn-add-dp-class">Agregar clase</button>
+      </div>
+      <div id="dp-class-err" class="err"></div>
+    </div>
+    <div style="margin-top:14px"><button class="gold" id="btn-save-diploma">${editingDiploma ? "Guardar cambios" : "Agregar diplomado"}</button>
+    ${editingDiploma ? `<button class="ghost" id="btn-cancel-diploma">Cancelar</button>` : ""}</div>
     <div id="diploma-msg" class="okmsg"></div><div id="diploma-err" class="err"></div>
   </div>`;
   const seed = $("btn-seed");
@@ -3099,24 +3501,99 @@ async function renderCourses() {
     courses[id].startDate = startDate; courses[id].durationMonths = durationMonths; courses[id].classroomUrl = classroomUrl; courses[id].showDiplomas = showDiplomas;
     showOk($("course-msg"), "Guardado: " + courses[id].name);
   }));
-  // Catálogo de diplomados: agregar y eliminar (solo admin).
-  const btnAddDiploma = $("btn-add-diploma");
-  if (btnAddDiploma) btnAddDiploma.addEventListener("click", async () => {
+  // Catálogo de diplomados: agregar y editar con maestro, precios y clases
+  // (solo admin). Al asignar un maestro, el diplomado también se agrega a
+  // la lista `diplomas` de ese maestro (espejo que usan las reglas).
+  // La lista de clases se actualiza en su propio contenedor para no borrar
+  // lo que ya se escribió en el formulario.
+  const updateDpClassesList = () => {
+    const box = $("dp-classes-list");
+    if (!box) return;
+    box.innerHTML = editingDiplomaClasses.length ? editingDiplomaClasses.map((c, i) => `<div class="docline"><span><b>Clase ${i + 1}:</b> ${esc(c.title || "")}</span><a target="_blank" rel="noopener" href="${esc(c.url || "")}">Abrir</a><a href="#" data-dp-class-del="${i}" style="color:var(--err)">Quitar</a></div>`).join("") : `<p class="muted">Aún no hay clases agregadas.</p>`;
+    box.querySelectorAll("[data-dp-class-del]").forEach(a => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      editingDiplomaClasses = editingDiplomaClasses.filter((_, i) => i !== parseInt(a.getAttribute("data-dp-class-del"), 10));
+      updateDpClassesList();
+    }));
+  };
+  updateDpClassesList();
+  const btnAddDpClass = $("btn-add-dp-class");
+  if (btnAddDpClass) btnAddDpClass.addEventListener("click", () => {
+    const title = ($("dp-class-title").value || "").trim();
+    const url = ($("dp-class-url").value || "").trim();
+    showErr($("dp-class-err"), "");
+    if (!title || !url) { showErr($("dp-class-err"), "Escribe el título y el enlace de la clase."); return; }
+    if (!/^https?:\/\//i.test(url)) { showErr($("dp-class-err"), "El enlace debe empezar con http:// o https://."); return; }
+    editingDiplomaClasses = [...editingDiplomaClasses, { title, url }];
+    $("dp-class-title").value = ""; $("dp-class-url").value = "";
+    updateDpClassesList();
+  });
+  s.querySelectorAll("[data-edit-diploma]").forEach(b => b.addEventListener("click", () => {
+    const dp = diplomas.find(d => d.id === b.getAttribute("data-edit-diploma"));
+    if (!dp) return;
+    editingDiplomaId = dp.id;
+    editingDiplomaClasses = Array.isArray(dp.classes) ? dp.classes.map(c => ({ title: c.title || "", url: c.url || "" })) : [];
+    renderCourses();
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  }));
+  const btnCancelDiploma = $("btn-cancel-diploma");
+  if (btnCancelDiploma) btnCancelDiploma.addEventListener("click", () => {
+    editingDiplomaId = null; editingDiplomaClasses = [];
+    renderCourses();
+  });
+  const btnSaveDiploma = $("btn-save-diploma");
+  if (btnSaveDiploma) btnSaveDiploma.addEventListener("click", async () => {
     const name = ($("diploma-name").value || "").trim();
+    const teacherId = $("diploma-teacher").value || "";
+    const priceFull = parseFloat($("diploma-price-full").value) || 0;
+    const priceWeekly = parseFloat($("diploma-price-weekly").value) || 0;
+    const priceHalf = parseFloat($("diploma-price-half").value) || 0;
+    const totalClasses = parseInt($("diploma-total-classes").value, 10) || 0;
     showErr($("diploma-err"), ""); showOk($("diploma-msg"), "");
     if (!name) { showErr($("diploma-err"), "Escribe el nombre del diplomado."); return; }
-    btnAddDiploma.disabled = true;
+    btnSaveDiploma.disabled = true;
     try {
-      await db.collection("diplomas").add({ name, createdAt: Date.now() });
+      let teacherName = "";
+      if (teacherId) {
+        const tDoc = await db.collection("teachers").doc(teacherId).get();
+        teacherName = tDoc.exists ? (tDoc.data().name || "") : "";
+      }
+      const data = { name, teacherId, teacherName, priceFull, priceWeekly, priceHalf, totalClasses, classes: editingDiplomaClasses };
+      let savedMsg = "";
+      if (editingDiplomaId) {
+        const old = diplomas.find(d => d.id === editingDiplomaId);
+        const oldTeacherId = old ? (old.teacherId || "") : "";
+        await db.collection("diplomas").doc(editingDiplomaId).update(data);
+        if (oldTeacherId && oldTeacherId !== teacherId) {
+          await db.collection("teachers").doc(oldTeacherId).update({ diplomas: firebase.firestore.FieldValue.arrayRemove(editingDiplomaId) });
+        }
+        if (teacherId) {
+          await db.collection("teachers").doc(teacherId).update({ diplomas: firebase.firestore.FieldValue.arrayUnion(editingDiplomaId) });
+        }
+        savedMsg = "Diplomado actualizado.";
+      } else {
+        const ref = await db.collection("diplomas").add({ ...data, createdAt: Date.now() });
+        if (teacherId) {
+          await db.collection("teachers").doc(teacherId).update({ diplomas: firebase.firestore.FieldValue.arrayUnion(ref.id) });
+        }
+        savedMsg = "Diplomado agregado.";
+      }
+      editingDiplomaId = null; editingDiplomaClasses = [];
       await renderCourses();
-      showOk($("diploma-msg"), "Diplomado agregado.");
-    } catch (e) { showErr($("diploma-err"), "No se pudo agregar: " + (e.message || e)); }
-    finally { btnAddDiploma.disabled = false; }
+      showOk($("diploma-msg"), savedMsg);
+    } catch (e) { showErr($("diploma-err"), "No se pudo guardar: " + (e.message || e)); }
+    finally { btnSaveDiploma.disabled = false; }
   });
   s.querySelectorAll("[data-del-diploma]").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("¿Eliminar este diplomado del catálogo? Los alumnos que lo tenían asignado dejarán de verlo.")) return;
     try {
-      await db.collection("diplomas").doc(b.getAttribute("data-del-diploma")).delete();
+      const id = b.getAttribute("data-del-diploma");
+      const dp = diplomas.find(d => d.id === id);
+      await db.collection("diplomas").doc(id).delete();
+      if (dp && dp.teacherId) {
+        await db.collection("teachers").doc(dp.teacherId).update({ diplomas: firebase.firestore.FieldValue.arrayRemove(id) });
+      }
+      if (editingDiplomaId === id) { editingDiplomaId = null; editingDiplomaClasses = []; }
       renderCourses();
     } catch (e) { showErr($("diploma-err"), "No se pudo eliminar: " + (e.message || e)); }
   }));
@@ -3944,6 +4421,32 @@ function pickStudentIdToSave(desiredId, serverResolved) {
   return { error: true };
 }
 // END-STUDENT-ID-HELPERS
+// ---------- Buscador en Mis alumnos (mejora 3) ----------
+// Filtro EN CLIENTE sobre name y studentId (nada más: ni correo, ni
+// teléfono, ni CURP). Por nombre: insensible a mayúsculas y acentos
+// (normPersonName) y por palabras — cada palabra debe aparecer como
+// subcadena, en cualquier orden ("Perez Juan" casa con Juan Pérez).
+// Por código: el ID normalizado (normalizeStudentId: GEC-0010,
+// gec0010, 0010 y 10 son el mismo) y también por subcadena ("gec-00",
+// "001"). Función pura: se prueba en Node
+// (functions/test-student-search.js).
+function studentMatchesSearch(st, query) {
+  const q = String(query || "").trim();
+  if (!q) return true;
+  const nameNorm = normPersonName(st && st.name);
+  const words = normPersonName(q).split(" ").filter(Boolean);
+  const nameOk = words.length > 0 && words.every(w => nameNorm.includes(w));
+  // Código: se comparan las formas compactas (sin espacios ni guiones),
+  // así "gec-00" casa con GEC-0010 y "001" también; la igualdad con el
+  // ID normalizado cubre además las cuatro formas canónicas ("10" es
+  // GEC-0010, "gec0010" es GEC-0010).
+  const compactQ = q.toUpperCase().replace(/[\s-]/g, "");
+  const compactId = String((st && st.studentId) || "").toUpperCase().replace(/[\s-]/g, "");
+  const idSub = compactQ.length > 0 && compactId.length > 0 && compactId.includes(compactQ);
+  const nidQ = normalizeStudentId(q);
+  const idExact = !!nidQ && nidQ === normalizeStudentId(st && st.studentId);
+  return nameOk || idSub || idExact;
+}
 // IDs ya existentes para sugerir el siguiente: el admin y la gestora leen
 // todos los alumnos del portal; un maestro solo los suyos (su regla de
 // lectura no le deja ver los de otras maestras). Si la lectura falla, se
@@ -4008,6 +4511,22 @@ async function createStudentOnServer(fields) {
     return { docId: d.docId || "", studentId: d.studentId, requested: d.requested || "", skipped: !!d.skipped };
   } catch (e) { return null; }
 }
+// Carga masiva (mejora 7): UNA llamada con todas las filas leídas del
+// .xlsx. Devuelve { ok: true, data } o { ok: false, code, message,
+// details }: el código "functions/already-exists" es la re-subida
+// rechazada por huella (details trae fecha, quién, cuántos y el rango
+// de GEC), y el cliente ofrece "Volver a cargar de todos modos".
+async function bulkCreateStudentsOnServer(payload) {
+  try {
+    const fn = firebase.functions().httpsCallable("bulkCreateStudents");
+    const res = await fn(payload);
+    const d = res && res.data ? res.data : null;
+    if (!d || d.ok !== true) return { ok: false, code: "", message: "El servidor no respondió." };
+    return { ok: true, data: d };
+  } catch (e) {
+    return { ok: false, code: (e && e.code) || "", message: (e && e.message) || String(e), details: (e && e.details) || null };
+  }
+}
 // ---------- Avisos del maestro ----------
 // createdAt puede ser Timestamp de servidor, número o null: normalizar a ms.
 function tsMillis(v) {
@@ -4037,6 +4556,307 @@ async function fetchDiplomas() {
   out.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
   return out;
 }
+// ---------- Diplomados de pago ----------
+// Portado de la copia local (24 nov) a la base viva. Adaptaciones:
+// el admin y la gestora ven todos los diplomados (la gestora solo
+// supervisa: ve inscripciones, pagos y trabajos pero no escribe);
+// el maestro solo los suyos; el selector de alumnos va por la
+// callable listDiplomaPickerStudents (nunca se lee /students directo).
+// Sistema aparte de los diplomados opcionales (catálogo `diplomas` + estado
+// por alumno + interruptor showDiplomas, que se quedan tal cual).
+// Aquí: inscripciones de pago (colección diplomaEnrollments), pagos y
+// trabajos en subcolecciones, y enlaces de clases en diplomas/{id}.classes.
+// La lista de "Mis alumnos" nunca se mezcla con esta: esta pestaña solo lee
+// diplomaEnrollments (alumnos de diplomados), nunca la colección students.
+let selDiplomaId = ""; // diplomado seleccionado en esta pestaña
+let expandedEnrollmentId = ""; // inscripción abierta en detalle
+let editingClasses = []; // [{title, url}] clases en edición en esta pestaña
+let editingClassesFor = ""; // id del diplomado al que pertenecen editingClasses
+
+function planLabel(plan) {
+  return plan === "completo" ? "Completo" : plan === "mitad" ? "Mitad de curso" : "Por semana";
+}
+function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("es-MX"); }
+// Semanas pagadas: unión de las semanas de los pagos CONFIRMADOS.
+function paidWeeksOf(payments) {
+  const s = new Set();
+  (payments || []).forEach(p => { if (p.confirmed) (p.weeks || []).forEach(w => s.add(Number(w))); });
+  return [...s].sort((a, b) => a - b);
+}
+// Semanas que el plan cubre por defecto al registrar un pago.
+function defaultWeeksForPlan(plan, totalClasses, paidWeeks) {
+  if (!totalClasses) return [];
+  if (plan === "completo") return Array.from({ length: totalClasses }, (_, i) => i + 1);
+  if (plan === "mitad") return Array.from({ length: Math.ceil(totalClasses / 2) }, (_, i) => i + 1);
+  const paid = new Set(paidWeeks || []);
+  for (let k = 1; k <= totalClasses; k++) if (!paid.has(k)) return [k];
+  return [];
+}
+// Diplomados que puede gestionar el usuario actual: el admin ve todos; el
+// maestro solo los que tiene en su arreglo `diplomas` o los que llevan su uid.
+async function fetchMyDiplomas() {
+  const all = await fetchDiplomas();
+  if (isAdmin || isManager) return all;
+  const mine = (me.diplomas || []);
+  return all.filter(d => mine.includes(d.id) || d.teacherId === me.uid);
+}
+// Alumnos para el selector de inscripción: SOLO nombre, curso y maestro
+// actual. Nunca se muestran CURP ni teléfono (no se leen ni se dibujan).
+// Alumnos para el selector de inscripcion: SOLO nombre, curso y maestro
+// actual. Nunca se muestran CURP ni telefono (no se leen ni se dibujan).
+// La lista viene de la callable listDiplomaPickerStudents: el navegador
+// NUNCA lee /students directo (la regla ya no lo permite al maestro de
+// diplomado). Devuelve exactamente {id, name, courseName, teacherName,
+// authUid} por alumno activo.
+async function fetchAllStudentsForPicker() {
+  await loadFunctionsScript();
+  const fn = firebase.functions().httpsCallable("listDiplomaPickerStudents");
+  const res = await fn({});
+  const list = (res.data && Array.isArray(res.data.students)) ? res.data.students : [];
+  list.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
+  return list;
+}
+
+async function renderDiplomas() {
+  const s = $("section");
+  const myDiplomas = await fetchMyDiplomas();
+  if (!myDiplomas.length) {
+    s.innerHTML = `<div class="card"><h2>Diplomados</h2><p class="muted">Aún no tienes diplomados asignados. El administrador te asigna un diplomado en la pestaña Cursos.</p></div>`;
+    return;
+  }
+  if (!selDiplomaId || !myDiplomas.some(d => d.id === selDiplomaId)) selDiplomaId = myDiplomas[0].id;
+  const diploma = myDiplomas.find(d => d.id === selDiplomaId);
+  // La gestora solo supervisa: ve todo pero no inscribe, no registra
+  // pagos ni marca trabajos (las reglas tampoco se lo permiten).
+  const canManage = isAdmin || diploma.teacherId === me.uid;
+  const totalClasses = diploma.totalClasses || (Array.isArray(diploma.classes) ? diploma.classes.length : 0) || 0;
+  const classes = Array.isArray(diploma.classes) ? diploma.classes : [];
+  if (editingClassesFor !== selDiplomaId) {
+    editingClassesFor = selDiplomaId;
+    editingClasses = classes.map(c => ({ title: c.title || "", url: c.url || "" }));
+  }
+  // Inscripciones de este diplomado. El maestro solo ve las suyas
+  // (teacherId == su uid); el admin las ve todas.
+  let q = db.collection("diplomaEnrollments").where("diplomaId", "==", selDiplomaId);
+  if (!isAdmin && !isManager) q = q.where("teacherId", "==", me.uid);
+  const snap = await q.get();
+  const enrollments = []; snap.forEach(d => enrollments.push({ id: d.id, ...d.data() }));
+  enrollments.sort((a, b) => {
+    const sa = (a.status === "cancelado" ? 1 : 0) - (b.status === "cancelado" ? 1 : 0);
+    return sa !== 0 ? sa : (a.studentName || "").localeCompare(b.studentName || "", "es");
+  });
+  // Pagos y tareas de cada inscripción (para contar semanas pagadas).
+  const paymentsByEnr = {};
+  const tasksByEnr = {};
+  await Promise.all(enrollments.map(async (e) => {
+    const ps = await db.collection("diplomaEnrollments").doc(e.id).collection("payments").get();
+    const arr = []; ps.forEach(d => arr.push({ id: d.id, ...d.data() }));
+    arr.sort((a, b) => (a.date || "") < (b.date || "") ? 1 : -1);
+    for (const p of arr) {
+      if (p.receiptPath) {
+        try { p.receiptUrl = await storage.ref(p.receiptPath).getDownloadURL(); } catch (_) { p.receiptUrl = ""; }
+      }
+    }
+    paymentsByEnr[e.id] = arr;
+    const ts = await db.collection("diplomaEnrollments").doc(e.id).collection("tasks").get();
+    const tarr = []; ts.forEach(d => tarr.push({ id: d.id, ...d.data() }));
+    tarr.sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0));
+    for (const t of tarr) {
+      if (t.filePath) {
+        try { t.fileUrl = await storage.ref(t.filePath).getDownloadURL(); } catch (_) { t.fileUrl = ""; }
+      }
+    }
+    tasksByEnr[e.id] = tarr;
+  }));
+  const pickerStudents = await fetchAllStudentsForPicker();
+  const expanded = expandedEnrollmentId ? enrollments.find(e => e.id === expandedEnrollmentId) : null;
+  const expPayments = expanded ? (paymentsByEnr[expanded.id] || []) : [];
+  const expTasks = expanded ? (tasksByEnr[expanded.id] || []) : [];
+  const expPaid = paidWeeksOf(expPayments);
+  const defaultWeeks = expanded ? defaultWeeksForPlan(expanded.paymentPlan, totalClasses, expPaid) : [];
+  const today = new Date().toISOString().slice(0, 10);
+
+  s.innerHTML = `
+  <div class="card"><h2>Diplomados de pago</h2>
+    <p class="hint">Aquí gestionas tus diplomados: inscribes alumnos ya registrados, marcas sus pagos y ves sus trabajos. Los alumnos de aquí NO se mezclan con los de tus cursos.</p>
+    <div class="row">
+      <div><label>Diplomado</label><select id="sel-diploma">${myDiplomas.map(d => `<option value="${d.id}"${d.id === selDiplomaId ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select></div>
+    </div>
+    <p class="hint"><strong>${esc(diploma.name)}</strong>${diploma.teacherName ? " · Maestro/a: " + esc(diploma.teacherName) : " · <span style='color:var(--err)'>Sin maestro asignado</span>"}${diploma.priceFull ? " · Completo: " + fmtMoney(diploma.priceFull) : ""}${diploma.priceWeekly ? " · Por semana: " + fmtMoney(diploma.priceWeekly) : ""}${diploma.priceHalf ? " · Mitad: " + fmtMoney(diploma.priceHalf) : ""}${totalClasses ? " · " + totalClasses + " clases" : " · <span style='color:var(--err)'>Sin número de clases</span>"}</p>
+  </div>
+  <div class="card"><h3>Clases de este diplomado</h3>
+    <p class="hint">Sube los enlaces de las clases en orden (clase 1, 2, 3…). El alumno solo ve las clases que ya pagó.</p>
+    <div id="dp2-classes-list"></div>
+    ${canManage ? `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <input id="dp2-class-title" placeholder="Título de la clase" style="flex:2;min-width:220px">
+      <input id="dp2-class-url" type="url" placeholder="Enlace de la clase" style="flex:2;min-width:220px">
+      <button class="gold" id="btn-add-dp2-class">Agregar clase</button>
+    </div>
+    <div id="dp2-class-err" class="err"></div>
+    <div style="margin-top:12px"><button class="gold" id="btn-save-dp2-classes">Guardar clases</button> <span id="dp2-classes-msg" class="okmsg"></span></div>` : ""}
+  </div>
+  <div class="card"><h3>Inscribir un alumno en este diplomado</h3>
+    <p class="hint">Elige un alumno ya registrado en el sistema: se inscribe sobre su ficha EXISTENTE, no se duplica. El alumno usa su mismo login y ve el diplomado en su portal, separado de sus cursos.</p>
+    ${canManage ? (pickerStudents.length ? `
+    <div class="row">
+      <div><label>Alumno</label><select id="enr-student">${pickerStudents.map(st => `<option value="${st.id}">${esc(st.name)} — ${esc(st.courseName)} · ${esc(st.teacherName)}</option>`).join("")}</select></div>
+      <div><label>Plan de pago</label><select id="enr-plan"><option value="completo">Completo (todas las clases)</option><option value="semanal">Por semana (una clase)</option><option value="mitad">Mitad de curso (primera mitad)</option></select></div>
+    </div>
+    <div style="margin-top:12px"><button class="gold" id="btn-enroll">Inscribir alumno</button></div>` : `<p class="muted">Aún no hay alumnos registrados en el sistema.</p>`) : `<p class="muted">Solo el administrador o el maestro del diplomado inscriben alumnos.</p>`}
+    <div id="enr-msg" class="okmsg"></div><div id="enr-err" class="err"></div>
+  </div>
+  <div class="card"><h3>Alumnos inscritos (${enrollments.filter(e => e.status !== "cancelado").length})</h3>
+    ${enrollments.length ? `<table><tr><th>Alumno</th><th>Plan</th><th>Estado</th><th>Semanas pagadas</th><th></th></tr>
+    ${enrollments.map(e => {
+      const pw = paidWeeksOf(paymentsByEnr[e.id] || []);
+      const isCancelled = e.status === "cancelado";
+      return `<tr${isCancelled ? ' style="opacity:.6"' : ""}><td>${esc(e.studentName || "")}</td>
+      <td>${planLabel(e.paymentPlan)}</td>
+      <td>${isCancelled ? "Cancelado" : (e.status === "completado" ? "Completado" : "Activo")}</td>
+      <td>Pagadas ${pw.length} de ${totalClasses || "?"}</td>
+      <td>${isCancelled ? (canManage ? `<button class="small" data-reactivate-enr="${e.id}">Reactivar</button>` : "") : `<button class="small" data-enr="${e.id}">${expanded && expanded.id === e.id ? "Cerrar" : "Ver"}</button>`}</td></tr>`;
+    }).join("")}</table>` : `<p class="muted">Aún no hay alumnos inscritos en este diplomado.</p>`}
+  </div>
+  ${expanded ? `
+  <div class="card"><h3>${esc(expanded.studentName || "")} — ${esc(diploma.name)}</h3>
+    <p class="hint">Plan: ${planLabel(expanded.paymentPlan)} · Pagadas ${expPaid.length} de ${totalClasses || "?"} semanas${expPaid.length ? " (semanas " + expPaid.join(", ") + ")" : ""}</p>
+    <h4>Pagos</h4>
+    ${expPayments.length ? expPayments.map(p => `<div class="docline"><span><b>${esc(p.date || "")}</b> · ${fmtMoney(p.amount)} · Semanas: ${(p.weeks || []).join(", ") || "—"}</span><span>${p.confirmed ? `<span class="badge">Confirmado</span>` : `<span class="badge off">Pendiente</span>`} ${p.receiptUrl ? `<a target="_blank" rel="noopener" href="${esc(p.receiptUrl)}">Ver comprobante</a>` : ""} ${!p.confirmed && canManage ? `<button class="small" data-confirm-payment="${p.id}">Confirmar</button>` : ""}</span></div>`).join("") : `<p class="muted">Aún no hay pagos registrados.</p>`}
+    ${canManage ? `<h4 style="margin-top:14px">Registrar un pago</h4>` : ""}
+    ${totalClasses ? (canManage ? `
+    <div class="row">
+      <div><label>Monto (MXN)</label><input id="pay-amount" type="number" min="0" step="1" placeholder="Ej. 150"></div>
+      <div><label>Fecha</label><input id="pay-date" type="date" value="${today}"></div>
+    </div>
+    <label>Semanas que cubre este pago</label>
+    <div>${Array.from({ length: totalClasses }, (_, i) => i + 1).map(k => `<label style="display:inline-block;margin:4px 10px 4px 0;font-weight:400;color:var(--text)"><input type="checkbox" class="pay-week" value="${k}" style="width:auto"${defaultWeeks.includes(k) ? " checked" : ""}> Semana ${k}</label>`).join("")}</div>
+    <div style="margin-top:12px"><button class="gold" id="btn-add-payment">Registrar pago (confirmado)</button></div>
+    <div id="pay-msg" class="okmsg"></div><div id="pay-err" class="err"></div>` : `<p class="muted">Solo el administrador o el maestro del diplomado registran pagos.</p>`) : `<p class="muted">Configura el número de clases del diplomado (pestaña Cursos) para poder registrar pagos por semana.</p>`}
+    <h4 style="margin-top:16px">Trabajos / proyectos del alumno</h4>
+    ${expTasks.length ? expTasks.map(t => `<div class="docline"><span><b>${esc(t.title || "")}</b> · ${esc(t.fileName || "")}</span><span>${t.status === "revisado" ? `<span class="badge">Revisado</span>` : `<span class="badge off">Entregado</span>`} ${t.fileUrl ? `<a target="_blank" rel="noopener" href="${esc(t.fileUrl)}">Abrir</a>` : ""} ${t.status !== "revisado" && canManage ? `<button class="small" data-review-task="${t.id}">Marcar revisado</button>` : ""}</span></div>`).join("") : `<p class="muted">El alumno aún no sube trabajos.</p>`}
+    ${canManage ? `<div style="margin-top:14px"><button class="ghost" id="btn-cancel-enr" style="color:var(--err)">Cancelar inscripción</button></div>` : ""}
+    <div id="enr-detail-err" class="err"></div>
+  </div>` : ""}`;
+
+  // --- Editor de clases (solo se actualiza su propio contenedor) ---
+  const updateDp2ClassesList = () => {
+    const box = $("dp2-classes-list");
+    if (!box) return;
+    box.innerHTML = editingClasses.length ? editingClasses.map((c, i) => `<div class="docline"><span><b>Clase ${i + 1}:</b> ${esc(c.title || "")}</span><a target="_blank" rel="noopener" href="${esc(c.url || "")}">Abrir</a>${canManage ? `<a href="#" data-dp2-class-del="${i}" style="color:var(--err)">Quitar</a>` : ""}</div>`).join("") : `<p class="muted">Aún no hay clases agregadas.</p>`;
+    box.querySelectorAll("[data-dp2-class-del]").forEach(a => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      editingClasses = editingClasses.filter((_, i) => i !== parseInt(a.getAttribute("data-dp2-class-del"), 10));
+      updateDp2ClassesList();
+    }));
+  };
+  updateDp2ClassesList();
+  const btnAddDp2Class = $("btn-add-dp2-class");
+  if (btnAddDp2Class) btnAddDp2Class.addEventListener("click", () => {
+    const title = ($("dp2-class-title").value || "").trim();
+    const url = ($("dp2-class-url").value || "").trim();
+    showErr($("dp2-class-err"), "");
+    if (!title || !url) { showErr($("dp2-class-err"), "Escribe el título y el enlace de la clase."); return; }
+    if (!/^https?:\/\//i.test(url)) { showErr($("dp2-class-err"), "El enlace debe empezar con http:// o https://."); return; }
+    editingClasses = [...editingClasses, { title, url }];
+    $("dp2-class-title").value = ""; $("dp2-class-url").value = "";
+    updateDp2ClassesList();
+  });
+  const btnSaveDp2Classes = $("btn-save-dp2-classes");
+  if (btnSaveDp2Classes) btnSaveDp2Classes.addEventListener("click", async () => {
+    showOk($("dp2-classes-msg"), "");
+    try {
+      // Solo se actualiza el campo `classes`: es lo único que el maestro
+      // del diplomado puede editar en este documento (regla de Firestore).
+      await db.collection("diplomas").doc(selDiplomaId).update({ classes: editingClasses });
+      showOk($("dp2-classes-msg"), "Clases guardadas.");
+    } catch (e) { showErr($("dp2-class-err"), "No se pudieron guardar: " + (e.message || e)); }
+  });
+  $("sel-diploma").addEventListener("change", () => { selDiplomaId = $("sel-diploma").value; expandedEnrollmentId = ""; renderDiplomas(); });
+  // --- Inscribir alumno ---
+  const btnEnroll = $("btn-enroll");
+  if (btnEnroll) btnEnroll.addEventListener("click", async () => {
+    const studentId = $("enr-student").value;
+    const plan = $("enr-plan").value;
+    showErr($("enr-err"), ""); showOk($("enr-msg"), "");
+    if (!diploma.teacherId) { showErr($("enr-err"), "Este diplomado aún no tiene maestro asignado. Asígnale uno en la pestaña Cursos."); return; }
+    if (!studentId) { showErr($("enr-err"), "Elige un alumno."); return; }
+    // Duplicado: se revisa contra las inscripciones ya cargadas de este
+    // diplomado (una consulta nueva por alumno no se podría probar en las
+    // reglas para el maestro).
+    if (enrollments.some(e => e.studentId === studentId && e.status !== "cancelado")) { showErr($("enr-err"), "Este alumno ya está inscrito en este diplomado."); return; }
+    const st = pickerStudents.find(x => x.id === studentId);
+    btnEnroll.disabled = true;
+    try {
+      await db.collection("diplomaEnrollments").add({
+        studentId, diplomaId: selDiplomaId, diplomaName: diploma.name || "",
+        teacherId: diploma.teacherId, teacherName: diploma.teacherName || "",
+        studentName: st ? st.name : "", studentAuthUid: st ? st.authUid : "",
+        paymentPlan: plan, status: "activo", createdAt: Date.now()
+      });
+      await renderDiplomas();
+      showOk($("enr-msg"), "Alumno inscrito en el diplomado.");
+    } catch (e) { showErr($("enr-err"), "No se pudo inscribir: " + (e.message || e)); }
+    finally { btnEnroll.disabled = false; }
+  });
+  // --- Ver / reactivar inscripciones ---
+  s.querySelectorAll("[data-enr]").forEach(b => b.addEventListener("click", () => {
+    const id = b.getAttribute("data-enr");
+    expandedEnrollmentId = expandedEnrollmentId === id ? "" : id;
+    renderDiplomas();
+  }));
+  s.querySelectorAll("[data-reactivate-enr]").forEach(b => b.addEventListener("click", async () => {
+    try {
+      await db.collection("diplomaEnrollments").doc(b.getAttribute("data-reactivate-enr")).update({ status: "activo" });
+      renderDiplomas();
+    } catch (e) { showErr($("enr-err"), "No se pudo reactivar: " + (e.message || e)); }
+  }));
+  if (expanded) {
+    // --- Confirmar pago (comprobante subido por el alumno) ---
+    s.querySelectorAll("[data-confirm-payment]").forEach(b => b.addEventListener("click", async () => {
+      try {
+        await db.collection("diplomaEnrollments").doc(expanded.id).collection("payments").doc(b.getAttribute("data-confirm-payment")).update({ confirmed: true, confirmedBy: me.uid, confirmedAt: Date.now() });
+        renderDiplomas();
+      } catch (e) { showErr($("enr-detail-err"), "No se pudo confirmar: " + (e.message || e)); }
+    }));
+    // --- Registrar un pago (el maestro lo marca como confirmado al momento) ---
+    const btnPay = $("btn-add-payment");
+    if (btnPay) btnPay.addEventListener("click", async () => {
+      const amount = parseFloat($("pay-amount").value) || 0;
+      const date = $("pay-date").value || today;
+      const weeks = [...document.querySelectorAll(".pay-week:checked")].map(x => parseInt(x.value, 10)).sort((a, b) => a - b);
+      showErr($("pay-err"), ""); showOk($("pay-msg"), "");
+      if (amount <= 0) { showErr($("pay-err"), "Escribe el monto del pago."); return; }
+      if (!weeks.length) { showErr($("pay-err"), "Elige al menos una semana que cubre este pago."); return; }
+      btnPay.disabled = true;
+      try {
+        await db.collection("diplomaEnrollments").doc(expanded.id).collection("payments").add({
+          amount, date, weeks, confirmed: true, confirmedBy: me.uid, confirmedAt: Date.now(), createdAt: Date.now()
+        });
+        renderDiplomas();
+      } catch (e) { showErr($("pay-err"), "No se pudo registrar: " + (e.message || e)); }
+      finally { btnPay.disabled = false; }
+    });
+    // --- Marcar trabajo como revisado ---
+    s.querySelectorAll("[data-review-task]").forEach(b => b.addEventListener("click", async () => {
+      try {
+        await db.collection("diplomaEnrollments").doc(expanded.id).collection("tasks").doc(b.getAttribute("data-review-task")).update({ status: "revisado" });
+        renderDiplomas();
+      } catch (e) { showErr($("enr-detail-err"), "No se pudo marcar: " + (e.message || e)); }
+    }));
+    // --- Cancelar inscripción ---
+    const btnCancelEnr = $("btn-cancel-enr");
+    if (btnCancelEnr) btnCancelEnr.addEventListener("click", async () => {
+      if (!confirm("¿Cancelar la inscripción de este alumno en el diplomado? Ya no verá el diplomado en su portal.")) return;
+      try {
+        await db.collection("diplomaEnrollments").doc(expanded.id).update({ status: "cancelado" });
+        expandedEnrollmentId = "";
+        renderDiplomas();
+      } catch (e) { showErr($("enr-detail-err"), "No se pudo cancelar: " + (e.message || e)); }
+    });
+  }
+}
+
 // ---------- Clases (grupos) de un maestro ----------
 // Una clase es un grupo con su propio día y horario: {teacherId, courseId,
 // days: [1,3] (0=Dom..6=Sáb), startTime, endTime, label, active,
@@ -4540,7 +5360,7 @@ function bindClassManager(box, teacher, list, ctx) {
           if (teacher.uid === me.uid) me.courses = newCourses;
         }
         // Si la clase es de otro curso, cambiar el selector a ese curso.
-        if (ctx.scope === "alumnos" && courseId !== selCourse) { selCourse = courseId; selClass = ""; }
+        if (ctx.scope === "alumnos" && courseId !== selCourse) { selCourse = courseId; selClass = ""; studentSearch = ""; }
         await ctx.onChanged();
         const m = document.querySelector("#cls-msg"); if (m) showOk(m, "Clase registrada: " + label + ".");
       }
@@ -4940,6 +5760,10 @@ async function renderStudents() {
   driveConn = driveConnValue;
   myClasses = classesValue;
   diplomasCatalog = diplomasValue;
+  // Insignia "También en: …" del historial de avisos: cursos del grupo
+  // de cada aviso (si tiene groupId). Si falla, el historial se muestra
+  // sin insignia.
+  const avGroupCourses = await avGroupCourseIdsFor(announcements).catch(() => ({}));
   if (isStale()) return;
   // Enlace de Classroom del curso seleccionado: primero el propio del maestro, si no el del curso.
   const classroomLink = ((teacherObj && teacherObj.classroomLinks) || {})[selCourse] || course.classroomUrl || "";
@@ -5066,15 +5890,23 @@ async function renderStudents() {
       <div><label>Clase</label><select id="sel-class"><option value="">Todas las clases</option>${classOptions}</select></div>
     </div>
     <div class="row" style="margin-top:12px">
+      <div><label>Buscar alumno</label><div style="display:flex;gap:8px;align-items:center"><input id="student-search" type="search" placeholder="Buscar por nombre o ID (ej. GEC-0010)" value="${esc(studentSearch)}" autocomplete="off" style="flex:1;min-width:0;width:auto"><button id="student-search-clear" class="small ghost${studentSearch ? "" : " hidden"}" type="button" title="Limpiar búsqueda">✕</button></div><p class="muted" id="student-search-count" style="margin:4px 0 0">${shownStudents.length} de ${shownStudents.length} alumnos</p></div>
+    </div>
+    <div class="row" style="margin-top:12px">
       <button id="btn-export" class="gold">Exportar lista en Excel</button>
       <button id="btn-blank" class="ghost">Descargar plantilla en blanco</button>
+      <button id="btn-bulk-template" class="ghost">Descargar plantilla de carga</button>
+      <button id="btn-bulk-upload" class="gold">Cargar alumnos en Excel</button>
+      <input type="file" id="bulk-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
     </div>
     <div id="exp-msg" class="okmsg"></div><div id="exp-err" class="err"></div>
+    <div id="bulk-box"></div>
     <div id="st-pass-msg" class="okmsg"></div><div id="st-pass-err" class="err"></div>
-    <div class="students-grid">
+    <div class="students-grid" id="students-grid">
     ${shownStudents.map(studentCardHtml).join("") || `<p class="muted">Aún no hay alumnos en este curso con este maestro.</p>`}
     </div>
-    ${archivedStudents.length ? `<h3 style="margin-top:18px">Archivados</h3><p class="hint">Alumnos archivados de este curso: su ficha, pagos y documentos se conservan y se pueden restaurar.</p><div class="students-grid">${archivedStudents.map(studentCardHtml).join("")}</div>` : ""}
+    <p id="student-search-empty" class="muted hidden"></p>
+    ${archivedStudents.length ? `<div id="archived-students-block"><h3 id="archived-students-title" style="margin-top:18px">Archivados</h3><p class="hint">Alumnos archivados de este curso: su ficha, pagos y documentos se conservan y se pueden restaurar.</p><div class="students-grid" id="archived-students-grid">${archivedStudents.map(studentCardHtml).join("")}</div></div>` : ""}
   </div>
   ${(false && (isAdmin || isManager)) ? `<div class="card"><h2>Constancias</h2>
     <p class="hint">Busca un alumno por su ID y se jalan sus datos para la constancia. La matrícula la escribes a mano aquí mismo; no se guarda en el portal.</p>
@@ -5096,8 +5928,12 @@ async function renderStudents() {
     <div id="drive-err" class="err"></div>
   </div>
   ${selCourse ? `<div class="card"><h2>Avisos para este curso</h2>
-    <p class="hint">Los alumnos de este curso ven estos avisos en su portal.</p>
-    ${announcements.map(a => `<div class="docline" style="align-items:flex-start"><div style="flex:1"><strong>${esc(a.title || "Aviso")}</strong> <span class="muted">${fmtAvDate(a.createdAt)}${a.teacherName ? " · " + esc(a.teacherName) : ""}</span><br>${esc(a.text || "")}</div>${(isAdmin || isManager || a.teacherId === me.uid) ? `<button class="small ghost" data-del-av="${a.id}" style="color:var(--err)">Eliminar</button>` : ""}</div>`).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
+    <p class="hint">Los alumnos de este curso ven estos avisos en su portal. Puedes publicarlo también en otros cursos marcando sus casillas.</p>
+    <div style="margin-bottom:8px"><label>Cursos</label>
+      <div><label style="font-weight:600"><input type="checkbox" id="av-all-st"> Todos los cursos</label></div>
+      ${myCourseIds.map(id => `<div><label><input type="checkbox" class="av-course-cb-st" value="${id}"${id === selCourse ? " checked" : ""}> ${esc(avCourseName(id))}</label></div>`).join("")}
+    </div>
+    ${announcements.map(a => announcementItemHtml(a, (avGroupCourses[a.groupId] || []).filter(x => x !== selCourse).map(avCourseName))).join("") || `<p class="muted">Aún no hay avisos para este curso.</p>`}
     <div class="row" style="margin-top:12px">
       <div><label>Título</label><input id="av-title" placeholder="Ej. Cambio de horario"></div>
     </div>
@@ -5136,11 +5972,66 @@ async function renderStudents() {
     <div id="st-msg" class="okmsg"></div><div id="st-err" class="err"></div>
   </div>`;
 
-  $("sel-course").addEventListener("change", (e) => { selCourse = e.target.value; selTeacher = ""; selClass = ""; editingStudentId = null; editingClassId = null; renderStudents(); });
+  $("sel-course").addEventListener("change", (e) => { selCourse = e.target.value; selTeacher = ""; selClass = ""; studentSearch = ""; editingStudentId = null; editingClassId = null; renderStudents(); });
   const stSel = $("sel-teacher");
-  if (stSel) stSel.addEventListener("change", (e) => { selTeacher = e.target.value; selClass = ""; editingStudentId = null; editingClassId = null; renderStudents(); });
+  if (stSel) stSel.addEventListener("change", (e) => { selTeacher = e.target.value; selClass = ""; studentSearch = ""; editingStudentId = null; editingClassId = null; renderStudents(); });
   const clSel = $("sel-class");
   if (clSel) clSel.addEventListener("change", (e) => { selClass = e.target.value; editingStudentId = null; renderStudents(); });
+  // Buscador en Mis alumnos (mejora 3): filtra en cliente sobre los
+  // arreglos ya en memoria (shownStudents, ya con curso/maestro/clase,
+  // y archivedStudents) y SOLO muestra u oculta las tarjetas de las
+  // dos rejillas + el contador, sin refetch y sin reconstruir la
+  // sección: el campo nunca pierde el foco (vive fuera de las rejillas
+  // y no se vuelve a pintar al teclear) y una ficha abierta no se
+  // cierra (las tarjetas no se recrean, solo se ocultan; sus botones
+  // conservan sus handlers). La cola de comprobantes
+  // (paymentsQueueStudents) y el Excel usan shownStudents sin filtrar,
+  // así que la búsqueda no los toca.
+  const searchById = new Map();
+  shownStudents.forEach(st => searchById.set("student-card-" + st.id, st));
+  archivedStudents.forEach(st => searchById.set("student-card-" + st.id, st));
+  const applyStudentSearch = () => {
+    const q = studentSearch;
+    const grid = $("students-grid");
+    const archGrid = $("archived-students-grid");
+    const archBlock = $("archived-students-block");
+    const archTitle = $("archived-students-title");
+    const countEl = $("student-search-count");
+    const emptyEl = $("student-search-empty");
+    const clearBtn = $("student-search-clear");
+    let visibleActive = 0, visibleArch = 0;
+    if (grid) grid.querySelectorAll(".student-card").forEach(card => {
+      const st = searchById.get(card.id);
+      const show = !st || studentMatchesSearch(st, q);
+      card.style.display = show ? "" : "none";
+      if (show) visibleActive++;
+    });
+    if (archGrid) archGrid.querySelectorAll(".student-card").forEach(card => {
+      const st = searchById.get(card.id);
+      const show = !st || studentMatchesSearch(st, q);
+      card.style.display = show ? "" : "none";
+      if (show) visibleArch++;
+    });
+    if (countEl) countEl.textContent = visibleActive + " de " + shownStudents.length + " alumnos";
+    if (clearBtn) clearBtn.classList.toggle("hidden", !q);
+    const total = shownStudents.length + archivedStudents.length;
+    if (emptyEl) {
+      const noMatch = !!q && total > 0 && visibleActive + visibleArch === 0;
+      emptyEl.classList.toggle("hidden", !noMatch);
+      if (noMatch) emptyEl.textContent = "No se encontró ningún alumno con '" + q + "' en este curso. Prueba con otro nombre o ID.";
+    }
+    if (archBlock) archBlock.classList.toggle("hidden", !!q && visibleArch === 0);
+    if (archTitle) archTitle.textContent = q ? "Archivados (" + visibleArch + " de " + archivedStudents.length + ")" : "Archivados";
+  };
+  const searchInput = $("student-search");
+  if (searchInput) searchInput.addEventListener("input", () => { studentSearch = searchInput.value; applyStudentSearch(); });
+  const searchClear = $("student-search-clear");
+  if (searchClear) searchClear.addEventListener("click", () => {
+    studentSearch = "";
+    if (searchInput) { searchInput.value = ""; searchInput.focus(); }
+    applyStudentSearch();
+  });
+  applyStudentSearch();
   const btnGotoClasses = $("btn-goto-classes");
   if (btnGotoClasses) btnGotoClasses.addEventListener("click", () => { const el = $("classes-card"); if (el) { el.scrollIntoView({ behavior: "auto", block: "start" }); fijarBarra(); const cs = $("cls-course"); if (cs) cs.focus(); } });
   const classesCard = $("classes-card");
@@ -5171,6 +6062,30 @@ async function renderStudents() {
       showOk($("exp-msg"), "Plantilla en blanco descargada.");
     } catch (e) { showErr($("exp-err"), "No se pudo descargar: " + (e.message || e)); }
   });
+  // Carga masiva (mejora 7): una planilla por clase; el contexto
+  // curso+maestro+clase viene de los selectores de esta sección y de la
+  // clase del formulario de alta (st-clase). El archivo se parsea en el
+  // navegador y nunca se sube: solo viajan las filas leídas, en UNA
+  // llamada a bulkCreateStudents.
+  const btnBulkTemplate = $("btn-bulk-template");
+  if (btnBulkTemplate) btnBulkTemplate.addEventListener("click", async () => {
+    try {
+      showErr($("exp-err"), "");
+      await downloadBulkTemplate(course);
+      showOk($("exp-msg"), "Plantilla de carga descargada.");
+    } catch (e) { showErr($("exp-err"), "No se pudo descargar la plantilla: " + (e.message || e)); }
+  });
+  const btnBulkUpload = $("btn-bulk-upload");
+  const bulkFileInput = $("bulk-file");
+  if (btnBulkUpload && bulkFileInput) {
+    btnBulkUpload.addEventListener("click", () => bulkFileInput.click());
+    bulkFileInput.addEventListener("change", async () => {
+      const f = bulkFileInput.files && bulkFileInput.files[0];
+      bulkFileInput.value = "";
+      if (!f) return;
+      await handleBulkFile(f, { course, courseClasses, myClasses, selCourse, selTeacher });
+    });
+  }
   // Constancias (solo admin y gestora: la tarjeta no se muestra a un
   // maestro normal): buscar un alumno por su ID y mostrar sus datos. La
   // matrícula se escribe a mano en el campo de la tarjeta y NO se guarda.
@@ -5202,29 +6117,31 @@ async function renderStudents() {
     const constIdInput = $("const-id");
     if (constIdInput) constIdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doConstSearch(); } });
   }
-  // Avisos para este curso: publicar y eliminar.
+  // Avisos para este curso: publicar en uno o varios cursos, y eliminar
+  // (con alcance si el aviso es de un grupo). En esta tarjeta solo este
+  // curso viene marcado por defecto.
+  let avStSelected = [selCourse];
+  wireAvCourseCheckboxes(s, "av-all-st", ".av-course-cb-st", myCourseIds, avStSelected, (sel) => { avStSelected = sel; });
   const btnPublishAv = $("btn-publish-av");
   if (btnPublishAv) btnPublishAv.addEventListener("click", async () => {
     const title = $("av-title").value.trim();
     const text = $("av-text").value.trim();
     showErr($("av-err"), ""); showOk($("av-msg"), "");
     if (!title || !text) { showErr($("av-err"), "Escribe el título y el mensaje del aviso."); return; }
+    if (!avStSelected.length) { showErr($("av-err"), "Elige al menos un curso."); return; }
     if (!teacherObj) { showErr($("av-err"), "Elige un maestro primero."); return; }
     btnPublishAv.disabled = true;
     try {
-      await db.collection("announcements").add({ courseId: selCourse, teacherId: teacherObj.uid, teacherName: teacherObj.name, title, text, createdAt: firebase.firestore.FieldValue.serverTimestamp(), active: true });
+      // Para firmar cada copia con el maestro de su curso hacen falta
+      // todos los maestros (aquí `teachers` solo trae los de este curso).
+      const allTeachers = seeAll() ? await listTeachers() : [me];
+      const res = await publishMultiCourseAnnouncement({ courseIds: avStSelected, title, text, chosenTeacher: teacherObj, teachers: allTeachers, publisher: me });
       await renderStudents();
-      showOk($("av-msg"), "Aviso publicado.");
+      showOk($("av-msg"), "Aviso publicado en " + res.count + (res.count === 1 ? " curso." : " cursos."));
     } catch (e) { showErr($("av-err"), "No se pudo publicar: " + (e.message || e)); }
     finally { btnPublishAv.disabled = false; }
   });
-  s.querySelectorAll("[data-del-av]").forEach(b => b.addEventListener("click", async () => {
-    if (!confirm("¿Eliminar este aviso? Los alumnos dejarán de verlo.")) return;
-    try {
-      await db.collection("announcements").doc(b.getAttribute("data-del-av")).delete();
-      renderStudents();
-    } catch (e) { showErr($("exp-err"), "No se pudo eliminar: " + (e.message || e)); }
-  }));
+  bindAvDeleteButtons(s, () => renderStudents());
   s.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", async () => {
     const st = students.find(x => x.id === b.getAttribute("data-edit"));
     if (!st) return;
@@ -5781,6 +6698,333 @@ async function exportAttendance(course, teacher, students, blank, classLabel) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------- Carga masiva de alumnos con Excel (mejora 7) ----------
+// Una planilla por clase: el curso, el maestro y la clase vienen de los
+// selectores de la pestaña Alumnos y de la clase del formulario de alta
+// (st-clase). El .xlsx se parsea EN EL NAVEGADOR con el ExcelJS que el
+// portal ya usa (ensureExcelJS): el archivo nunca se sube a Storage ni
+// a Functions, solo viajan las filas leídas en UNA llamada a la callable
+// bulkCreateStudents. El servidor re-valida todo y devuelve el reporte
+// por fila (éxito parcial: las filas con error no se crean, las demás sí).
+let bulkPending = null; // { ctx, fileName, rows, warnings, classLabel, week }
+let bulkLastReport = null; // último reporte por fila, para descargarlo en Excel
+let bulkLastCourseName = "";
+const BULK_MAX_ROWS_CLIENT = 200; // igual que el servidor (401 escrituras < 500 por transacción).
+
+// BEGIN-BULK-CLIENT-PURE
+// Helpers puros de la carga masiva (espejo de los del servidor en
+// functions/index.js, bloque BEGIN-BULK-UPLOAD-HELPERS): se prueban en
+// Node en test-carga-masiva.js extrayendo este bloque tal cual.
+const BULK_HEADERS_CLIENT = ["Nombre completo", "CURP", "Teléfono/WhatsApp", "Correo (Classroom)", "Fecha de inicio", "Generación"];
+function bulkNormHeaderClient(s) {
+  return String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
+}
+function bulkNormPhoneClient(v) {
+  let d = String(v == null ? "" : v).replace(/\D/g, "");
+  if (d.length === 13 && d.startsWith("521")) d = d.slice(3);
+  else if (d.length === 12 && d.startsWith("52")) d = d.slice(2);
+  else if (d.length === 13 && (d.startsWith("044") || d.startsWith("045"))) d = d.slice(3);
+  else if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  return d;
+}
+function bulkNormStartDateClient(v) {
+  if (v == null || v === "") return "";
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return "";
+    const p = n => String(n).padStart(2, "0");
+    return v.getFullYear() + "-" + p(v.getMonth() + 1) + "-" + p(v.getDate());
+  }
+  if (typeof v === "number") {
+    if (!isFinite(v) || v < 1 || v > 60000) return String(v);
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    const p = n => String(n).padStart(2, "0");
+    return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate());
+  }
+  const s = String(v).trim();
+  if (!s) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const y = +s.slice(0, 4), m = +s.slice(5, 7), dd = +s.slice(8, 10);
+  const d = new Date(y, m - 1, dd);
+  if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) return s;
+  return s;
+}
+function bulkIsRealYMDClient(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const y = +s.slice(0, 4), m = +s.slice(5, 7), dd = +s.slice(8, 10);
+  const d = new Date(y, m - 1, dd);
+  return d.getFullYear() === y && d.getMonth() === m - 1 && d.getDate() === dd;
+}
+function bulkTrimClient(v) {
+  return typeof v === "string" ? v.trim() : (v == null ? "" : String(v).trim());
+}
+function bulkCanonicalRowClient(raw) {
+  const r = (raw && typeof raw === "object") ? raw : {};
+  let generation = r.generation;
+  if (typeof generation === "number") generation = Number.isInteger(generation) ? generation : String(generation);
+  else generation = bulkTrimClient(generation);
+  if (typeof generation === "string" && /^\d{4}$/.test(generation)) generation = parseInt(generation, 10);
+  return {
+    excelRow: (typeof r.excelRow === "number" && r.excelRow > 0) ? r.excelRow : 0,
+    name: bulkTrimClient(r.name).replace(/\s+/g, " "),
+    curp: bulkTrimClient(r.curp).toUpperCase(),
+    phone: bulkNormPhoneClient(r.phone),
+    phoneHadDigits: bulkTrimClient(r.phone) !== "" && bulkNormPhoneClient(r.phone) === "",
+    email: bulkTrimClient(r.email).toLowerCase(),
+    startDate: bulkNormStartDateClient(r.startDate),
+    generation,
+  };
+}
+function bulkRowIsEmptyClient(raw) {
+  const r = (raw && typeof raw === "object") ? raw : {};
+  return ["name", "curp", "phone", "email", "startDate", "generation"].every(k => bulkTrimClient(r[k]) === "");
+}
+function bulkValidateRowClient(c) {
+  if (!c.name) return { ok: false, error: "Falta el nombre completo." };
+  if (!c.curp) return { ok: false, error: "Falta la CURP." };
+  if (!/^[A-Z0-9]{18}$/.test(c.curp)) return { ok: false, error: "La CURP debe tener 18 caracteres (letras y números en mayúsculas)." };
+  if (c.phoneHadDigits) return { ok: false, error: "El teléfono no tiene dígitos válidos." };
+  if (c.phone && c.phone.length !== 10) return { ok: false, error: "El teléfono debe tener 10 dígitos." };
+  if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) return { ok: false, error: "El correo no es válido." };
+  if (c.startDate && !bulkIsRealYMDClient(c.startDate)) return { ok: false, error: "La fecha de inicio debe ser AAAA-MM-DD o una fecha de Excel." };
+  if (typeof c.generation !== "number" || !Number.isInteger(c.generation) || c.generation < 1000 || c.generation > 9999) return { ok: false, error: "La generación debe ser un año de 4 dígitos (ej. 2027)." };
+  return { ok: true };
+}
+// END-BULK-CLIENT-PURE
+
+function downloadXlsxBlob(buf, filename) {
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// Plantilla de carga: hoja Alumnos con los 6 encabezados en la fila 1 y
+// hoja Instrucciones con las reglas. CURP y teléfono en formato texto
+// (para que Excel no quite el 0 inicial ni convierta la CURP), fecha en
+// formato AAAA-MM-DD. Sin filas de ejemplo: una fila de ejemplo se
+// parsearía como un alumno si no se borra.
+async function downloadBulkTemplate(course) {
+  await ensureExcelJS();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Alumnos");
+  ws.columns = [
+    { header: "Nombre completo", width: 36 },
+    { header: "CURP", width: 22 },
+    { header: "Teléfono/WhatsApp", width: 20 },
+    { header: "Correo (Classroom)", width: 32 },
+    { header: "Fecha de inicio", width: 16 },
+    { header: "Generación", width: 14 },
+  ];
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true };
+  headerRow.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDEECB" } }; });
+  ws.getColumn(2).numFmt = "@";
+  ws.getColumn(3).numFmt = "@";
+  ws.getColumn(5).numFmt = "yyyy-mm-dd";
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  const inst = wb.addWorksheet("Instrucciones");
+  inst.getColumn(1).width = 140;
+  [
+    "Plantilla de carga masiva de alumnos — Gecatech",
+    "Una planilla por clase: el curso, el maestro y la clase se toman de los selectores del portal al cargar el archivo. Aquí NO se escriben.",
+    "No borres ni cambies los encabezados de la fila 1. Si falta una columna o un encabezado no coincide, se rechaza el archivo entero sin crear nada.",
+    "1) Nombre completo — obligatorio. 2) CURP — obligatoria, 18 caracteres en mayúsculas (letras y números). 3) Teléfono/WhatsApp — opcional; se aceptan espacios, guiones y +52; debe quedar en 10 dígitos. 4) Correo (Classroom) — opcional, en minúsculas. 5) Fecha de inicio — opcional; fecha de Excel o texto AAAA-MM-DD. 6) Generación — obligatoria, 4 dígitos (ej. 2027).",
+    "El ID del alumno (GEC-...) lo asigna el servidor: esta planilla no lleva columna de ID.",
+    "Filas vacías se saltan. Una fila con error no se crea, pero las demás sí: el reporte dice la fila y el motivo.",
+    "Duplicados dentro del mismo curso: misma CURP, mismo nombre o mismo correo en la misma clase no se crean. El mismo correo en otro curso sí se permite.",
+    "Si vuelves a subir el mismo archivo, el portal lo rechaza porque ya se cargó antes (te dirá cuándo, quién y cuántos alumnos creó).",
+    "Solo se lee la primera hoja. El archivo debe ser .xlsx (no .xls, .csv ni con macros).",
+    "Los diplomados nacen en pendiente y la semana se hereda de la clase. Solo se crea la ficha del alumno, sin cuenta de acceso.",
+  ].forEach(t => { const row = inst.addRow([t]); row.getCell(1).alignment = { wrapText: true, vertical: "top" }; });
+  inst.getRow(1).font = { bold: true, size: 14 };
+  const buf = await wb.xlsx.writeBuffer();
+  downloadXlsxBlob(buf, "Plantilla_carga_alumnos.xlsx");
+}
+
+// Clase de la carga: la del formulario de alta (st-clase), que por
+// defecto es la clase por defecto del curso. Sin clase no se puede dar
+// de alta (igual que el alta individual).
+function bulkClassContext(ctx) {
+  const sel = $("st-clase");
+  const classId = (sel && sel.value) || "";
+  const classDoc = (ctx.courseClasses || []).find(c => c.id === classId) || null;
+  if (!classDoc) return { classDoc: null, classId: "", label: "", week: null };
+  const week = classEffectiveWeekIdx(classDoc, ctx.myClasses || [], ctx.course || {});
+  return { classDoc, classId, label: classScheduleText(classDoc.days, classDoc.startTime, classDoc.endTime), week };
+}
+
+// Lee el .xlsx en el navegador (solo la primera hoja). Rechaza el
+// ARCHIVO ENTERO si no es .xlsx, si falta una columna obligatoria o si
+// un encabezado no coincide. Columnas extra desconocidas se ignoran con
+// aviso. Filas vacías se saltan. Devuelve { rows, warnings }: rows son
+// las filas tal como se mandan al servidor (con clientError si la
+// validación previa del cliente ya ve un problema; el servidor
+// re-valida todo y su reporte es el que manda).
+async function parseBulkWorkbook(buf, fileName) {
+  const name = String(fileName || "");
+  if (!/\.xlsx$/i.test(name)) throw new Error("El archivo debe ser .xlsx (no .xls, .csv ni .xlsm).");
+  const bytes = new Uint8Array(buf);
+  if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4B) throw new Error("El archivo no es un .xlsx válido.");
+  await ensureExcelJS();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
+  const ws = wb.worksheets[0];
+  if (!ws) throw new Error("El archivo no tiene hojas.");
+  const colByHeader = {};
+  const warnings = [];
+  ws.getRow(1).eachCell({ includeEmpty: false }, (cell, col) => {
+    const h = bulkNormHeaderClient(cell.value);
+    if (!h) return;
+    const expected = BULK_HEADERS_CLIENT.find(x => bulkNormHeaderClient(x) === h);
+    if (!expected) { warnings.push("Columna desconocida, se ignora: \"" + String(cell.value).trim() + "\"."); return; }
+    if (colByHeader[expected]) { warnings.push("Columna repetida, se usa la primera: \"" + expected + "\"."); return; }
+    colByHeader[expected] = col;
+  });
+  const missing = BULK_HEADERS_CLIENT.filter(h => !colByHeader[h]);
+  if (missing.length) throw new Error("Faltan columnas en la planilla: " + missing.join(", ") + ". Descarga la plantilla de carga y revisa los encabezados de la fila 1.");
+  const rows = [];
+  ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const get = (h) => { const c = row.getCell(colByHeader[h]); return c ? c.value : null; };
+    const raw = { name: get("Nombre completo"), curp: get("CURP"), phone: get("Teléfono/WhatsApp"), email: get("Correo (Classroom)"), startDate: get("Fecha de inicio"), generation: get("Generación") };
+    if (bulkRowIsEmptyClient(raw)) return;
+    const payload = {
+      excelRow: rowNumber,
+      name: raw.name == null ? "" : String(raw.name).trim(),
+      curp: raw.curp == null ? "" : String(raw.curp).trim(),
+      phone: raw.phone == null ? "" : String(raw.phone).trim(),
+      email: raw.email == null ? "" : String(raw.email).trim(),
+      startDate: bulkNormStartDateClient(raw.startDate),
+      generation: (typeof raw.generation === "number") ? raw.generation : (raw.generation == null ? "" : String(raw.generation).trim()),
+    };
+    const chk = bulkValidateRowClient(bulkCanonicalRowClient(payload));
+    payload.clientError = chk.ok ? "" : chk.error;
+    rows.push(payload);
+  });
+  if (!rows.length) throw new Error("El archivo no tiene alumnos: todas las filas están vacías.");
+  if (rows.length > BULK_MAX_ROWS_CLIENT) throw new Error("La planilla tiene " + rows.length + " alumnos; el máximo por carga es " + BULK_MAX_ROWS_CLIENT + ".");
+  return { rows, warnings };
+}
+async function handleBulkFile(file, ctx) {
+  const box = $("bulk-box");
+  if (!box) return;
+  const cls = bulkClassContext(ctx);
+  if (!cls.classDoc) {
+    box.innerHTML = `<p class="err">Primero registra una clase para este curso: sin clase no se puede dar de alta alumnos.</p>`;
+    return;
+  }
+  box.innerHTML = `<p class="muted">Leyendo ${esc(file.name)}…</p>`;
+  try {
+    const buf = await file.arrayBuffer();
+    const parsed = await parseBulkWorkbook(buf, file.name);
+    bulkPending = { ctx, fileName: file.name, rows: parsed.rows, warnings: parsed.warnings, classLabel: cls.label, week: cls.week };
+    renderBulkPreview();
+  } catch (e) {
+    bulkPending = null;
+    box.innerHTML = `<p class="err">${esc(e.message || e)}</p><p class="muted">El archivo se rechazó entero: no se creó ningún alumno. Descarga la plantilla de carga y revisa los encabezados.</p>`;
+  }
+}
+
+function renderBulkPreview() {
+  const box = $("bulk-box");
+  if (!box || !bulkPending) return;
+  const p = bulkPending;
+  const valid = p.rows.filter(r => !r.clientError).length;
+  const bad = p.rows.length - valid;
+  const show = p.rows.slice(0, 8);
+  box.innerHTML = `<h3 style="margin-top:12px">Vista previa: ${esc(p.fileName)}</h3>
+    <p class="muted">Curso: ${esc(p.ctx.course ? p.ctx.course.name : p.ctx.selCourse)} · Clase: ${esc(p.classLabel)}${p.week !== null && p.week !== undefined && p.week !== "" ? " · Semana actual " + esc(p.week) : ""} · La semana se hereda de la clase.</p>
+    <p><strong>${p.rows.length} filas</strong> · ${valid} válida(s) · ${bad} con error. Los duplicados (misma CURP, nombre o correo en este curso) se revisan en el servidor al confirmar.</p>
+    ${p.warnings.length ? `<p class="muted">Avisos: ${esc(p.warnings.join(" "))}</p>` : ""}
+    <div style="max-height:320px;overflow:auto"><table style="width:100%;border-collapse:collapse">
+      <tr><th>Fila</th><th>Nombre</th><th>CURP</th><th>Teléfono</th><th>Correo</th><th>Fecha</th><th>Gen.</th><th>Estado</th></tr>
+      ${show.map(r => `<tr><td>${r.excelRow}</td><td>${esc(r.name)}</td><td>${esc(r.curp)}</td><td>${esc(r.phone)}</td><td>${esc(r.email)}</td><td>${esc(r.startDate)}</td><td>${esc(r.generation)}</td><td>${r.clientError ? `<span class="err">${esc(r.clientError)}</span>` : "Válida"}</td></tr>`).join("")}
+    </table></div>
+    ${p.rows.length > 8 ? `<p class="muted">Se muestran las primeras 8 filas de ${p.rows.length}.</p>` : ""}
+    ${bad ? `<p class="muted">Las filas con error no se crearán; las demás sí.</p>` : ""}
+    <p><button id="bulk-confirm" class="gold" ${valid === 0 ? "disabled" : ""}>Confirmar carga de ${valid} alumno(s)</button> <button id="bulk-cancel" class="ghost">Cancelar</button></p>`;
+  $("bulk-confirm").addEventListener("click", () => confirmBulkUpload(false));
+  $("bulk-cancel").addEventListener("click", () => { bulkPending = null; box.innerHTML = ""; });
+}
+
+async function confirmBulkUpload(force) {
+  const box = $("bulk-box");
+  if (!box || !bulkPending) return;
+  const p = bulkPending;
+  const cls = bulkClassContext(p.ctx);
+  if (!cls.classDoc) {
+    bulkPending = null;
+    box.innerHTML = `<p class="err">La clase cambió o ya no existe. Vuelve a cargar el archivo.</p>`;
+    return;
+  }
+  const btn = $("bulk-confirm");
+  if (btn) btn.disabled = true;
+  box.innerHTML = `<p class="muted">Creando alumnos…</p>`;
+  try {
+    const res = await bulkCreateStudentsOnServer({
+      courseId: p.ctx.selCourse, teacherId: p.ctx.selTeacher, classId: cls.classId,
+      currentWeek: cls.week, rows: p.rows, force: !!force,
+    });
+    if (!res.ok && res.code === "functions/already-exists") {
+      box.innerHTML = `<p class="err">${esc(res.message)}</p>
+        <p>Si estás seguro de que estos alumnos aún no existen, puedes cargarlos de nuevo: el servidor volverá a revisar duplicados por CURP, nombre y correo.</p>
+        <p><button id="bulk-force" class="gold">Volver a cargar de todos modos</button> <button id="bulk-cancel2" class="ghost">Cancelar</button></p>`;
+      $("bulk-force").addEventListener("click", () => confirmBulkUpload(true));
+      $("bulk-cancel2").addEventListener("click", () => { bulkPending = null; box.innerHTML = ""; });
+      return;
+    }
+    if (!res.ok) throw new Error(res.message || "El servidor no respondió.");
+    const courseName = p.ctx.course ? p.ctx.course.name : "";
+    bulkPending = null;
+    renderBulkReport(res.data, courseName);
+  } catch (e) {
+    box.innerHTML = `<p class="err">No se pudo completar la carga: ${esc(e.message || e)}</p><p class="muted">Es posible que algunos alumnos sí se hayan creado: revisa la lista antes de volver a cargar el archivo.</p>`;
+  }
+}
+
+function renderBulkReport(data, courseName) {
+  const box = $("bulk-box");
+  if (!box) return;
+  const results = data.results || [];
+  const created = results.filter(r => r.result === "Creado").length;
+  const errors = results.length - created;
+  bulkLastCourseName = courseName || "";
+  bulkLastReport = results;
+  box.innerHTML = `<h3 style="margin-top:12px">Carga terminada: ${created} de ${results.length} alumno(s) creados</h3>
+    ${errors ? `<p class="err">${errors} fila(s) con error no se crearon. Las demás sí.</p>` : `<p class="okmsg">Todos los alumnos se crearon.</p>`}
+    <div style="max-height:320px;overflow:auto"><table style="width:100%;border-collapse:collapse">
+      <tr><th>Fila</th><th>Nombre</th><th>Resultado</th><th>GEC asignado</th><th>Motivo</th></tr>
+      ${results.map(r => `<tr><td>${r.excelRow}</td><td>${esc(r.name)}</td><td>${esc(r.result)}</td><td>${esc(r.studentId || "—")}</td><td>${esc(r.reason || "")}</td></tr>`).join("")}
+    </table></div>
+    <p><button id="bulk-report-dl" class="gold">Descargar reporte en Excel</button> <button id="bulk-view" class="ghost">Ver alumnos cargados</button></p>`;
+  $("bulk-report-dl").addEventListener("click", () => downloadBulkReport(bulkLastReport, bulkLastCourseName));
+  $("bulk-view").addEventListener("click", () => renderStudents());
+}
+
+async function downloadBulkReport(results, courseName) {
+  await ensureExcelJS();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Reporte");
+  ws.columns = [
+    { header: "Fila", width: 8 },
+    { header: "Nombre", width: 36 },
+    { header: "Resultado", width: 12 },
+    { header: "GEC asignado", width: 16 },
+    { header: "Motivo", width: 50 },
+  ];
+  ws.getRow(1).font = { bold: true };
+  (results || []).forEach(r => ws.addRow([r.excelRow, r.name || "", r.result || "", r.studentId || "", r.reason || ""]));
+  const buf = await wb.xlsx.writeBuffer();
+  const now = new Date();
+  const stamp = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+  const slug = String(courseName || "curso").replace(/[^A-Za-z0-9]+/g, "_").slice(0, 40);
+  downloadXlsxBlob(buf, "Reporte_carga_" + slug + "_" + stamp + ".xlsx");
 }
 
 </script>
